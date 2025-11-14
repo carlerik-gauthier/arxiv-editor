@@ -205,3 +205,41 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ============================
+# ArXiv Editor Project Specific
+# ============================
+
+# Data directories
+data/
+!data/.gitkeep
+outputs/
+!outputs/.gitkeep
+
+# PDFs and papers
+*.pdf
+
+# Cache files
+*.cache
+*.pkl
+*.pickle
+
+# Model files and embeddings
+*.pt
+*.pth
+*.bin
+*.onnx
+embeddings/
+models/
+
+# Project logs
+arxiv_editor.log
+
+# IDE specific
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
+Thumbs.db
+._*
