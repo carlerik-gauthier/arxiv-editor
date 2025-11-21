@@ -22,12 +22,12 @@ class Settings(BaseSettings):
     )
 
     # Email Configuration
-    smtp_host: str = Field(default="smtp.gmail.com", description="SMTP server host")
-    smtp_port: int = Field(default=587, description="SMTP server port")
-    smtp_username: str = Field(default="", description="SMTP username")
-    smtp_password: str = Field(default="", description="SMTP password")
-    smtp_use_tls: bool = Field(default=True, description="Use TLS for SMTP")
-    from_email: str = Field(default="", description="From email address")
+    # smtp_host: str = Field(default="smtp.gmail.com", description="SMTP server host")
+    # smtp_port: int = Field(default=587, description="SMTP server port")
+    # smtp_username: str = Field(default="", description="SMTP username")
+    # smtp_password: str = Field(default="", description="SMTP password")
+    # smtp_use_tls: bool = Field(default=True, description="Use TLS for SMTP")
+    # from_email: str = Field(default="", description="From email address")
 
     # ArXiv Configuration
     min_papers_threshold: int = Field(
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         ge=1,
     )
     max_papers_per_agent: int = Field(
-        default=500,
+        default=1000,
         description="Maximum papers an agent can fetch",
         ge=10,
     )

@@ -143,9 +143,9 @@ arxiv-editor/
 - CLI interface
 
 **Phase 2: ArXiv Data Fetching** 🚧 In Progress
-- Basic API integration
-- Multi-category fetching
-- PDF retrieval
+- ✅ Step 2.1: Basic API integration (`ArxivFetcher` class with `fetch_by_category`, `parse_paper_metadata`)
+- Step 2.2: Multi-category fetching with minimum threshold
+- Step 2.3: PDF retrieval
 
 **Phase 3-10**: See CONTEXT.md for full implementation plan
 

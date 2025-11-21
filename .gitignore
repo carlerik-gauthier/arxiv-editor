@@ -243,3 +243,7 @@ arxiv_editor.log
 .DS_Store
 Thumbs.db
 ._*
+
+
+# notebooks
+*.ipynb
