@@ -145,6 +145,144 @@ class TestArxivFetcher:
         assert paper.comment == "10 pages"
 
 
+class TestFetchWithThreshold:
+    """Tests for the fetch_with_threshold method."""
+
+    def test_fetch_with_threshold_mock_threshold_met(self):
+        """Test fetch_with_threshold when threshold is met immediately."""
+        fetcher = ArxivFetcher()
+
+        # Mock the fetch_multiple_categories method to return 100 papers
+        mock_papers = [
+            Paper(
+                arxiv_id=f"2301.{i:05d}",
+                title=f"Paper {i}",
+                authors=[f"Author {i}"],
+                summary=f"Summary {i}",
+                published=datetime(2023, 1, 15),
+                updated=datetime(2023, 1, 15),
+                categories=["math.PR"],
+                primary_category="math.PR",
+                pdf_url=f"https://arxiv.org/pdf/2301.{i:05d}",
+                entry_id=f"http://arxiv.org/abs/2301.{i:05d}",
+            )
+            for i in range(100)
+        ]
+
+        with patch.object(fetcher, "fetch_multiple_categories", return_value=mock_papers):
+            start_date = datetime(2023, 1, 1)
+            end_date = datetime(2023, 1, 7)
+
+            papers, actual_start, actual_end = fetcher.fetch_with_threshold(
+                categories=["math.PR"],
+                start_date=start_date,
+                end_date=end_date,
+                min_count=100,
+            )
+
+            assert len(papers) == 100
+            assert actual_start == start_date  # No expansion needed
+            assert actual_end == end_date
+
+    def test_fetch_with_threshold_mock_needs_expansion(self):
+        """Test fetch_with_threshold when date range needs expansion."""
+        fetcher = ArxivFetcher()
+
+        # Mock to return fewer papers first, then enough on second call
+        call_count = 0
+
+        def mock_fetch_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: not enough papers
+                return [
+                    Paper(
+                        arxiv_id=f"2301.{i:05d}",
+                        title=f"Paper {i}",
+                        authors=[f"Author {i}"],
+                        summary=f"Summary {i}",
+                        published=datetime(2023, 1, 15),
+                        updated=datetime(2023, 1, 15),
+                        categories=["math.PR"],
+                        primary_category="math.PR",
+                        pdf_url=f"https://arxiv.org/pdf/2301.{i:05d}",
+                        entry_id=f"http://arxiv.org/abs/2301.{i:05d}",
+                    )
+                    for i in range(50)
+                ]
+            else:
+                # Second call: enough papers
+                return [
+                    Paper(
+                        arxiv_id=f"2301.{i:05d}",
+                        title=f"Paper {i}",
+                        authors=[f"Author {i}"],
+                        summary=f"Summary {i}",
+                        published=datetime(2023, 1, 15),
+                        updated=datetime(2023, 1, 15),
+                        categories=["math.PR"],
+                        primary_category="math.PR",
+                        pdf_url=f"https://arxiv.org/pdf/2301.{i:05d}",
+                        entry_id=f"http://arxiv.org/abs/2301.{i:05d}",
+                    )
+                    for i in range(100)
+                ]
+
+        with patch.object(
+            fetcher, "fetch_multiple_categories", side_effect=mock_fetch_side_effect
+        ):
+            start_date = datetime(2023, 1, 1)
+            end_date = datetime(2023, 1, 7)
+
+            papers, actual_start, actual_end = fetcher.fetch_with_threshold(
+                categories=["math.PR"],
+                start_date=start_date,
+                end_date=end_date,
+                min_count=100,
+                expansion_days=7,
+            )
+
+            assert len(papers) == 100
+            assert actual_start < start_date  # Date was expanded
+            assert actual_end == end_date
+            assert call_count == 2  # Two attempts were made
+
+    def test_fetch_with_threshold_mock_fails_after_max_expansions(self):
+        """Test that fetch_with_threshold raises error after max expansions."""
+        fetcher = ArxivFetcher()
+
+        # Mock to always return insufficient papers
+        mock_papers = [
+            Paper(
+                arxiv_id=f"2301.{i:05d}",
+                title=f"Paper {i}",
+                authors=[f"Author {i}"],
+                summary=f"Summary {i}",
+                published=datetime(2023, 1, 15),
+                updated=datetime(2023, 1, 15),
+                categories=["math.PR"],
+                primary_category="math.PR",
+                pdf_url=f"https://arxiv.org/pdf/2301.{i:05d}",
+                entry_id=f"http://arxiv.org/abs/2301.{i:05d}",
+            )
+            for i in range(50)
+        ]
+
+        with patch.object(fetcher, "fetch_multiple_categories", return_value=mock_papers):
+            start_date = datetime(2023, 1, 1)
+            end_date = datetime(2023, 1, 7)
+
+            with pytest.raises(ArxivFetcherError, match="Unable to fetch minimum 100 papers"):
+                fetcher.fetch_with_threshold(
+                    categories=["math.PR"],
+                    start_date=start_date,
+                    end_date=end_date,
+                    min_count=100,
+                    max_expansions=2,
+                )
+
+
 class TestArxivFetcherIntegration:
     """Integration tests that actually call the ArXiv API."""
 
@@ -207,6 +345,43 @@ class TestArxivFetcherIntegration:
 
         assert isinstance(papers, list)
         print(f"\nFetched {len(papers)} unique papers from math.PR and stat.TH")
+
+    @pytest.mark.integration
+    def test_fetch_with_threshold_integration(self):
+        """
+        Test fetch_with_threshold with real ArXiv API.
+
+        This test may expand the date range if there are few recent submissions.
+        Run with: pytest -m integration
+        """
+        fetcher = ArxivFetcher(request_delay=3.0)
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+
+        # Use a lower threshold for testing and categories likely to have papers
+        papers, actual_start, actual_end = fetcher.fetch_with_threshold(
+            categories=["cs.LG", "math.PR"],
+            start_date=start_date,
+            end_date=end_date,
+            min_count=20,  # Lower threshold for testing
+            max_results_per_category=50,
+            expansion_days=7,
+            max_expansions=3,
+        )
+
+        assert isinstance(papers, list)
+        assert len(papers) >= 20, f"Expected at least 20 papers, got {len(papers)}"
+        assert actual_start <= start_date
+        assert actual_end == end_date
+
+        days_expanded = (start_date - actual_start).days
+        print(f"\nFetched {len(papers)} papers")
+        print(f"Date range: {actual_start.date()} to {actual_end.date()}")
+        if days_expanded > 0:
+            print(f"Date range was expanded by {days_expanded} days")
+        else:
+            print("Original date range was sufficient")
 
 
 # Quick test runner for development

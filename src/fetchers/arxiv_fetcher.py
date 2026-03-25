@@ -7,7 +7,7 @@ to fetch research papers with proper rate limiting and error handling.
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -311,3 +311,114 @@ class ArxivFetcher:
             f"Fetched {len(all_papers)} unique papers from {len(categories)} categories"
         )
         return all_papers
+
+    def fetch_with_threshold(
+        self,
+        categories: List[str],
+        start_date: datetime,
+        end_date: Optional[datetime] = None,
+        min_count: int = 100,
+        max_results_per_category: int = 200,
+        expansion_days: int = 7,
+        max_expansions: int = 4,
+    ) -> tuple[List[Paper], datetime, datetime]:
+        """
+        Fetch papers ensuring at least min_count papers are retrieved.
+
+        Automatically expands the date range backwards if the threshold is not met.
+        This ensures sufficient data for topic modeling and analysis.
+
+        Args:
+            categories: List of ArXiv category codes to fetch from.
+            start_date: Initial start of the date range (inclusive).
+            end_date: End of the date range (inclusive). Defaults to now.
+            min_count: Minimum number of papers required.
+            max_results_per_category: Maximum papers to fetch per category per attempt.
+            expansion_days: Number of days to expand backwards on each iteration.
+            max_expansions: Maximum number of date range expansions to attempt.
+
+        Returns:
+            A tuple containing:
+                - List of unique Paper objects
+                - Actual start_date used (may differ from input if expanded)
+                - Actual end_date used
+
+        Raises:
+            ArxivFetcherError: If unable to meet threshold after max_expansions.
+        """
+        if end_date is None:
+            end_date = datetime.now()
+
+        # Ensure dates are timezone-naive for consistency
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
+
+        original_start_date = start_date
+        current_start_date = start_date
+        expansions = 0
+
+        logger.info(
+            f"Fetching papers with threshold of {min_count} from {len(categories)} categories. "
+            f"Initial date range: {start_date.date()} to {end_date.date()}"
+        )
+
+        while expansions <= max_expansions:
+            # Fetch papers with current date range
+            papers = self.fetch_multiple_categories(
+                categories=categories,
+                start_date=current_start_date,
+                end_date=end_date,
+                max_results_per_category=max_results_per_category,
+            )
+
+            paper_count = len(papers)
+
+            logger.info(
+                f"Fetched {paper_count} papers with date range "
+                f"{current_start_date.date()} to {end_date.date()}"
+            )
+
+            # Check if threshold is met
+            if paper_count >= min_count:
+                if expansions > 0:
+                    logger.info(
+                        f"Threshold met after {expansions} expansion(s). "
+                        f"Expanded date range by {(original_start_date - current_start_date).days} days."
+                    )
+                else:
+                    logger.info(
+                        f"Threshold met with original date range. "
+                        f"Fetched {paper_count} papers (minimum: {min_count})."
+                    )
+
+                return papers, current_start_date, end_date
+
+            # Threshold not met - expand date range backwards
+            if expansions >= max_expansions:
+                logger.error(
+                    f"Failed to meet threshold of {min_count} papers after {max_expansions} expansions. "
+                    f"Only fetched {paper_count} papers."
+                )
+                raise ArxivFetcherError(
+                    f"Unable to fetch minimum {min_count} papers. "
+                    f"Only found {paper_count} papers after expanding date range "
+                    f"{max_expansions} times ({current_start_date.date()} to {end_date.date()})."
+                )
+
+            expansions += 1
+            days_to_expand = expansion_days * expansions  # Increase expansion on each iteration
+            current_start_date = original_start_date - timedelta(days=days_to_expand)
+
+            logger.info(
+                f"Threshold not met ({paper_count}/{min_count}). "
+                f"Expanding date range backwards by {days_to_expand} days "
+                f"(expansion {expansions}/{max_expansions}). "
+                f"New start date: {current_start_date.date()}"
+            )
+
+        # This should not be reached due to the check above, but included for safety
+        raise ArxivFetcherError(
+            f"Unexpected error: exceeded max expansions without meeting threshold"
+        )
