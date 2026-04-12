@@ -7,13 +7,14 @@ It will fetch at most 10 papers that are the most representative, explains the i
 To achieve this, there will be different Agents:
 
 - Julius, named in honor of Julius Springer, is the editor and is responsible to answer the user request, plan, calls the other agents, and provide the one-pager
-- Michel, named in honor of Michel Benaim, who is an outstanding mathematician skilled in explaining complex mathematical concept to non-experts. He is really good at providing the intuition
+- Michel, named in honor of Michel Benaim, who is an outstanding mathematician skilled in explaining complex mathematical concept to non-experts. He is really good at providing the intuition. When relevant, he uses metaphors
 - Chris, named in honor of Krzystof Burdzy, who is a one the greatest researcher in probability
 - Alain, named in honor of Alain Valette, who is a one the greatest researcher in algebra
-- Bruno, named in honor of Bruno Colbois, who is a one the greatest researcher in Spectral and Riemannian Geometry  
-- Elisa, named in honor of Elisa Gorla, who is a one the greatest researcher in Applied mathematics, with a focus in cryptography 
+- Bruno, named in honor of Bruno Colbois, who is a one the greatest researcher in Spectral and Riemannian Geometry
+- Elisa, named in honor of Elisa Gorla, who is a one the greatest researcher in Applied mathematics, with a focus in cryptography
 - Felix, named in honor of Felix Schlenk, who is a one the greatest researcher in Dynamical systems and symplectic geometry
 - Abdoulaye, named in honor of Abdoulaye Sakho, who is a great researcher in Machine Learning
+- JeanBaptiste, who is a great researcher in Data Science with a focus on NLP, LLM and Agentic AI
 
 ## Agent tools
 - Julius interacts with the user, plans, checks and sends the one-pager by email to the user
@@ -32,17 +33,17 @@ All other agents' tools are:
 # Claude Suggested Plan
 
 ## Overview
-This plan breaks down the ArXiv research publishing system into testable, incremental steps. Each phase builds upon the previous one and includes specific testing criteria.
+This plan breaks down the ArXiv research publishing system into testable, incremental steps. The system uses **AI agents with tools and hand-offs** to create intelligent, collaborative workflows for research paper analysis and summarization.
 
 ## Plan Highlights
 
 The plan is organized into **10 phases with 30+ testable steps**:
 
 1. **Phase 1-2**: Project foundation and ArXiv data fetching
-2. **Phase 3**: Agent architecture (Julius, Michel, Chris, Alain, Bruno, Elisa, Felix, Abdoulaye)
-3. **Phase 4**: Text embeddings and BERTopic integration
-4. **Phase 5**: Paper analysis (problem extraction, key results, impact assessment)
-5. **Phase 6**: One-pager generation with dual-level explanations
+2. **Phase 3**: **AI Agent Architecture** - LLM-powered agents with tool-calling capabilities and hand-off protocols (Julius, Michel, Chris, Alain, Bruno, Elisa, Felix, Abdoulaye, JeanBaptiste)
+3. **Phase 4**: **Agent Tools** - Text embeddings and BERTopic integration as callable tools
+4. **Phase 5**: **AI-Powered Analysis Tools** - LLM-driven paper analysis with domain expertise
+5. **Phase 6**: **Multi-Agent Content Generation** - Collaborative one-pager creation with hand-offs between specialist agents
 6. **Phase 7**: Email integration
 7. **Phase 8**: End-to-end integration and optimization
 8. **Phase 9**: Testing and documentation
@@ -50,13 +51,17 @@ The plan is organized into **10 phases with 30+ testable steps**:
 
 ## Key Features
 
-- **Testability**: Each step includes specific test criteria
+- **AI Agents with Tools**: Each agent is powered by an LLM (Claude/GPT) with access to specialized tools
+- **Hand-off Protocol**: Agents can delegate tasks to other agents based on expertise
+- **Domain Specialization**: Each agent has custom system prompts and domain-specific knowledge
+- **Collaborative Workflows**: Multi-agent coordination for complex tasks (e.g., Julius delegates, specialists analyze, Michel refines explanations)
+- **Tool-Calling Framework**: Agents reason about which tools to use and when
+- **Testability**: Each step includes specific test criteria for agent behavior
 - **Incremental**: Build and validate progressively
-- **Clear objectives**: Every step has a defined goal
-- **Technology choices**: Specific libraries and approaches recommended
-- **Timeline**: 6-week estimate for full implementation
+- **Technology Stack**: LLM APIs (Anthropic Claude/OpenAI), BERTopic, sentence-transformers, tool execution framework
+- **Timeline**: 6-8 week estimate for full implementation
 
-The plan addresses all requirements from the project description including the multi-agent system, BERTopic topic modeling, representative paper selection, and generation of accessible summaries for both experts and non-experts.
+The plan addresses all requirements from the project description including the multi-agent system with AI reasoning, BERTopic topic modeling, representative paper selection, and generation of accessible summaries for both experts and non-experts through agent collaboration and hand-offs.
 
 ## Phase 1: Project Foundation & Setup
 
@@ -129,10 +134,10 @@ The plan addresses all requirements from the project description including the m
 
 **Test**: Download 3 papers, extract text, verify content is readable and non-empty
 
-## Phase 3: Agent Architecture Foundation
+## Phase 3: AI Agent Architecture with Tools and Hand-offs
 
-### Step 3.1: Base Agent Class
-**Objective**: Create reusable agent abstraction
+### Step 3.1: Base Agent Class and Tool System
+**Objective**: Create reusable AI agent abstraction with tool-calling capabilities
 
 **Tasks**:
 - Create `src/agents/base_agent.py`
@@ -140,173 +145,336 @@ The plan addresses all requirements from the project description including the m
   - `name`: str
   - `expertise`: str (domain description)
   - `categories`: List[str] (ArXiv categories)
-  - `fetch_papers(start_date, end_date)` method
-  - `check_threshold()` method
-  - `request_extension()` method to communicate with Julius
+  - `llm_client`: LLM client (Anthropic Claude or OpenAI) for natural language reasoning
+  - `system_prompt`: Template defining agent's role, expertise, and behavior
+  - `tools`: List of available tools the agent can call
+  - `conversation_history`: Maintains context across interactions
+- Create `src/agents/tools/` directory for tool definitions
+- Implement base tools as callable functions:
+  - `fetch_papers_tool(categories, start_date, end_date)` - Fetch papers from ArXiv
+  - `check_threshold_tool(paper_count, min_threshold)` - Verify minimum paper count
+  - `analyze_paper_tool(paper_text)` - Extract problem/results from paper
+  - `generate_summary_tool(papers, topic)` - Create topic summary
+- Implement tool execution framework:
+  - `execute_tool(tool_name, parameters)` - Safe tool execution with error handling
+  - `parse_tool_calls(llm_response)` - Extract tool calls from LLM response
 - Add logging and state tracking
 
-**Test**: Instantiate base agent, verify it can fetch papers and check threshold
+**Test**: Instantiate base agent, verify it can reason about tasks and execute tools
 
-### Step 3.2: Specialized Agent Implementations
-**Objective**: Create domain-specific agents
+### Step 3.2: Specialized Agent Implementations with Custom System Prompts
+**Objective**: Create domain-specific AI agents with tailored expertise
 
 **Tasks**:
-- Create agent classes in `src/agents/`:
+- Create agent classes in `src/agents/` inheriting from `BaseAgent`:
   - `MichelAgent` - Mathematics education/intuition (math.HO, math.GM)
+    - System prompt: Expert at explaining complex math to non-experts using metaphors
+    - Custom tool: `create_metaphor_tool(concept)` for generating intuitive explanations
   - `ChrisAgent` - Probability (math.PR, stat.TH)
+    - System prompt: Probability theory expert, focuses on stochastic processes
   - `AlainAgent` - Algebra (math.AG, math.RA, math.GR)
+    - System prompt: Algebraic structures specialist
   - `BrunoAgent` - Spectral/Riemannian Geometry (math.DG, math.SP)
+    - System prompt: Geometry expert, emphasizes geometric intuition
   - `ElisaAgent` - Applied math/Cryptography (cs.CR, math.OC)
+    - System prompt: Applied mathematics and cryptography specialist
   - `FelixAgent` - Dynamical systems/Symplectic geometry (math.DS, math.SG)
+    - System prompt: Dynamical systems expert, focuses on long-term behavior
   - `AbdoulayeAgent` - Machine Learning (cs.LG, stat.ML)
-- Each agent inherits from `BaseAgent` with specific categories
+    - System prompt: ML researcher, explains algorithms and applications
+  - `JeanBaptisteAgent` - Data Science/NLP/LLM/Agentic AI (cs.CL, cs.AI, cs.MA, cs.CE)
+    - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
+- Each agent has:
+  - Domain-specific system prompt defining expertise and communication style
+  - Customized tool access based on domain needs
+  - ArXiv category assignments
 
-**Test**: Instantiate each agent, verify they target correct ArXiv categories
+**Test**: Instantiate each agent, verify system prompts are loaded and tools are accessible
 
-### Step 3.3: Julius Coordinator Agent
-**Objective**: Implement the orchestrator
+### Step 3.3: Julius Coordinator Agent with Hand-offs
+**Objective**: Implement AI orchestrator with agent delegation and hand-offs
 
 **Tasks**:
 - Create `src/agents/julius_agent.py`
-- Implement `JuliusAgent` class with:
-  - `plan_research_summary(user_request)` - parse request, determine date range
-  - `coordinate_agents()` - delegate to specialized agents
-  - `handle_extension_request(agent, reason)` - approve/deny time extension
-  - `compile_summary()` - aggregate results
-  - `send_email(recipient, content)` - deliver one-pager
-- Add state machine for workflow management
+- Implement `JuliusAgent` class (inherits from `BaseAgent`) with:
+  - System prompt: Editor and coordinator role, responsible for planning and delegation
+  - Specialized coordination tools:
+    - `delegate_to_agent_tool(agent_name, task_description)` - Hand off tasks to specialized agents
+    - `request_agent_extension_tool(agent_name, reason)` - Request date range extension from agents
+    - `collect_agent_results_tool(agent_names)` - Gather results from multiple agents
+    - `compile_one_pager_tool(agent_results)` - Synthesize final document
+    - `send_email_tool(recipient, content)` - Deliver one-pager
+  - Hand-off protocol:
+    - Define task context and requirements when delegating
+    - Wait for agent completion or status updates
+    - Handle partial results and failures gracefully
+  - Conversation flow:
+    - Parse user request (date range, topics, preferences)
+    - Create execution plan with agent assignments
+    - Coordinate parallel agent execution where possible
+    - Synthesize results into coherent one-pager
+- Implement `AgentHandoff` class:
+  - `handoff_context`: Contains task description, constraints, and previous results
+  - `execute_handoff(from_agent, to_agent, context)` - Transfer control between agents
+  - `callback_on_completion()` - Return results to coordinating agent
+- Add workflow state machine:
+  - States: PLANNING, DELEGATING, COLLECTING, COMPILING, REVIEWING, COMPLETE
+  - Track agent task status (PENDING, IN_PROGRESS, COMPLETED, FAILED)
 
-**Test**: Create mock workflow, verify Julius can coordinate multiple agents and handle requests
+**Test**: Create workflow where Julius delegates to 2+ agents, verify hand-offs work and results are aggregated
 
-## Phase 4: Text Processing & Topic Modeling
+## Phase 4: Text Processing & Topic Modeling (Agent Tools)
 
-### Step 4.1: Text Embedding Pipeline
-**Objective**: Convert papers to vector representations
-
-**Tasks**:
-- Create `src/processing/embedder.py`
-- Implement `TextEmbedder` class using `sentence-transformers`
-- Use model: `all-MiniLM-L6-v2` (good balance of speed/quality)
-- Implement batch processing for efficiency
-- Cache embeddings to avoid recomputation
-
-**Test**: Embed 50 paper abstracts, verify output dimensions and similarity calculations work
-
-### Step 4.2: BERTopic Integration
-**Objective**: Discover topics in paper collection
-
-**Tasks**:
-- Create `src/processing/topic_modeler.py`
-- Implement `TopicModeler` class wrapping BERTopic
-- Configure BERTopic with:
-  - Custom embedding model from Step 4.1
-  - UMAP for dimensionality reduction
-  - HDBSCAN for clustering
-  - c-TF-IDF for topic representation
-- Implement `extract_topics(papers, min_topic_size=5)`
-- Implement `generate_topic_titles(topic_keywords)` using LLM or rule-based approach
-
-**Test**: Run on 100+ papers, verify topics are coherent and have meaningful titles
-
-### Step 4.3: Representative Paper Selection
-**Objective**: Find most representative papers per topic
+### Step 4.1: Text Embedding Tool
+**Objective**: Create embedding tool for agents to convert papers to vector representations
 
 **Tasks**:
-- Implement `select_representative_papers(topic_id, papers, n=5)` in `TopicModeler`
-- Use topic probability scores and centrality measures
-- Ensure diversity in selection (avoid very similar papers)
-- Return papers ranked by representativeness
+- Create `src/agents/tools/embedding_tool.py`
+- Implement `embed_text_tool(texts, batch_size=32)` as an agent-callable tool:
+  - Uses `sentence-transformers` with model `all-MiniLM-L6-v2` (good balance of speed/quality)
+  - Implements batch processing for efficiency
+  - Returns embeddings with proper error handling
+- Create `src/processing/embedder.py` as the underlying implementation
+- Implement embedding cache:
+  - `EmbeddingCache` class with file-based storage (pickle or HDF5)
+  - Cache key based on text hash + model version
+  - `get_or_create_embedding(text)` for transparent caching
+- Register tool with BaseAgent so specialized agents can use it
+- Add tool description for LLM to understand when/how to use it
 
-**Test**: For a topic with 20 papers, select top 5 representatives, manually verify they're central to the topic
+**Test**: Agent calls embed_text_tool with 50 abstracts, verify cached embeddings are reused on second call
 
-## Phase 5: Paper Analysis & Content Extraction
-
-### Step 5.1: Problem Statement Extraction
-**Objective**: Identify the research problem each paper addresses
-
-**Tasks**:
-- Create `src/analysis/paper_analyzer.py`
-- Implement `extract_problem_statement(paper_text)`:
-  - Look for introduction, problem setup sections
-  - Extract key sentences describing motivation and problem
-  - Use regex patterns and NLP (spaCy or transformers)
-- Handle different paper structures
-
-**Test**: Extract problem statements from 5 diverse papers, manually verify accuracy
-
-### Step 5.2: Key Results Extraction
-**Objective**: Identify main theorems, lemmas, and results
+### Step 4.2: Topic Discovery Tool with BERTopic
+**Objective**: Create topic modeling tool for agents to discover research themes
 
 **Tasks**:
-- Implement `extract_key_results(paper_text)`:
-  - Identify theorem/lemma/proposition environments
-  - Extract conclusion section highlights
-  - Detect frequently cited results within the paper
-  - Rank by importance (citation frequency, emphasis)
-- Generate structured output with result type and statement
+- Create `src/agents/tools/topic_discovery_tool.py`
+- Implement `discover_topics_tool(papers, min_topic_size=5, num_topics=None)` as agent-callable tool:
+  - Takes list of papers with abstracts/summaries
+  - Returns structured topic information with representative papers
+  - Includes error handling and progress updates
+- Create `src/processing/topic_modeler.py` as underlying implementation
+- Implement `TopicModeler` class wrapping BERTopic:
+  - Configure BERTopic with:
+    - Custom embeddings from embedding_tool
+    - UMAP for dimensionality reduction
+    - HDBSCAN for clustering
+    - c-TF-IDF for topic representation
+  - `extract_topics(papers, min_topic_size=5)` - Run topic modeling
+  - `get_topic_info(topic_id)` - Get keywords and metadata for a topic
+- Implement `generate_topic_title_tool(topic_keywords, sample_papers)`:
+  - Uses LLM to create human-readable topic titles
+  - Analyzes keywords and representative papers
+  - Returns engaging, descriptive title
+- Register both tools with BaseAgent for specialist agents to use
 
-**Test**: Extract results from 5 papers, verify key theorems are captured
+**Test**: Agent discovers topics from 100+ papers, verifies topics are coherent with meaningful LLM-generated titles
 
-### Step 5.3: Impact Assessment
-**Objective**: Determine why results matter
-
-**Tasks**:
-- Implement `assess_impact(paper, results)`:
-  - Check if results solve long-standing problems
-  - Identify novel techniques introduced
-  - Assess potential applications
-  - Generate impact summary
-- Use paper's discussion/conclusion sections
-
-**Test**: Assess impact for 3 papers with known significant contributions, verify quality of assessment
-
-## Phase 6: One-Pager Generation
-
-### Step 6.1: Content Synthesis Engine
-**Objective**: Combine all analyses into coherent summaries
+### Step 4.3: Representative Paper Selection Tool
+**Objective**: Create tool for agents to select most representative papers per topic
 
 **Tasks**:
-- Create `src/generation/synthesizer.py`
-- Implement `SynthesizeTopicSummary` class:
-  - `summarize_topic(topic_title, papers, analyses)` - create topic overview
-  - `create_paper_summary(paper, analysis)` - individual paper summary
-  - `generate_expert_explanation(content)` - technical version
-  - `generate_layperson_explanation(content)` - accessible version
-- Use template-based approach or LLM integration (OpenAI/Anthropic API)
+- Create `src/agents/tools/paper_selection_tool.py`
+- Implement `select_representative_papers_tool(topic_id, papers, n=5, diversity_threshold=0.7)`:
+  - Agent-callable tool that returns top N papers for a topic
+  - Tool description explains selection criteria to LLM
+  - Returns structured results with ranking scores and justifications
+- Implement selection algorithm in `TopicModeler`:
+  - `select_representative_papers(topic_id, papers, n=5)` - Core logic
+  - Uses topic probability scores from BERTopic
+  - Applies centrality measures (distance to topic centroid)
+  - Ensures diversity (avoid very similar papers using cosine similarity threshold)
+  - Ranks papers by combined score (representativeness + diversity)
+- Add `rank_papers_by_relevance_tool(papers, query)`:
+  - Allows agents to re-rank papers based on specific criteria
+  - Uses semantic similarity between query and papers
+- Register tools with specialized agents for paper curation
 
-**Test**: Generate summaries for 2 topics, verify they're coherent and dual-level (expert/layperson)
+**Test**: Agent selects top 5 papers from topic with 20 papers, verify diversity and relevance
 
-### Step 6.2: One-Pager Template & Formatting
-**Objective**: Create professional document output
+## Phase 5: AI-Powered Paper Analysis Tools
 
-**Tasks**:
-- Create `src/generation/formatter.py`
-- Design one-pager template structure:
-  - Header: Title, date range, agent credits
-  - Executive summary (2-3 sentences)
-  - Topic sections (3-5 topics max)
-    - Topic title and overview
-    - Top papers with problem/results/impact
-    - Expert vs. non-expert explanations
-  - Footer: Methodology note
-- Implement formatters: Markdown, HTML, PDF
-- Add styling for readability
-
-**Test**: Generate one-pager from sample data, verify formatting and readability
-
-### Step 6.3: Quality Assurance & Validation
-**Objective**: Ensure output meets quality standards
+### Step 5.1: Problem Statement Extraction Tool
+**Objective**: Create LLM-powered tool for agents to identify research problems
 
 **Tasks**:
-- Implement `src/generation/validator.py`
-- Add quality checks:
-  - Readability scores (Flesch-Kincaid)
-  - Length constraints (one page ~500-800 words)
-  - Citation accuracy
-  - Fact consistency across sections
-- Implement correction suggestions
+- Create `src/agents/tools/problem_extraction_tool.py`
+- Implement `extract_problem_statement_tool(paper_text, paper_metadata)` as agent-callable tool:
+  - Uses LLM (Claude/GPT) to analyze paper and extract problem statement
+  - Tool description guides LLM to look for: motivation, research gap, specific problem
+  - Returns structured output: {problem, motivation, research_gap, context}
+  - Handles papers of varying structure and length (with chunking if needed)
+- Create `src/analysis/paper_analyzer.py` for underlying logic:
+  - `PaperAnalyzer` class with LLM client
+  - `extract_sections(paper_text)` - Identify intro, methods, results, conclusion sections
+  - `chunk_text(text, max_tokens)` - Split long papers for LLM processing
+  - Fallback to heuristic extraction if LLM fails
+- Implement prompt engineering:
+  - System prompt for paper analysis task
+  - Few-shot examples of problem extraction
+  - Chain-of-thought reasoning for complex papers
+- Register tool with specialized agents (they use domain expertise to guide extraction)
 
-**Test**: Validate 3 generated one-pagers, verify quality metrics are reasonable
+**Test**: Agent extracts problem statements from 5 diverse papers, LLM provides contextualized explanations
+
+### Step 5.2: Key Results Extraction Tool
+**Objective**: Create LLM-powered tool for agents to identify main findings
+
+**Tasks**:
+- Create `src/agents/tools/results_extraction_tool.py`
+- Implement `extract_key_results_tool(paper_text, paper_metadata, domain=None)` as agent-callable tool:
+  - Uses LLM with domain-specific prompts (different for math vs ML papers)
+  - Tool description explains what constitutes "key results" in different domains
+  - Returns structured output: [{result_type, statement, significance, location}]
+  - Specialized agents can pass their domain expertise to customize extraction
+- Extend `PaperAnalyzer` class:
+  - `extract_key_results(paper_text, domain)` - Core extraction logic
+  - Hybrid approach:
+    - Pattern matching for formal statements (theorems, lemmas, propositions)
+    - LLM analysis for significance and informal results
+    - Section analysis (abstract, conclusion, results sections prioritized)
+  - `rank_results_by_importance(results)` - Order by significance
+- Implement domain-specific extraction:
+  - Math papers: Look for theorem environments, proofs, corollaries
+  - ML papers: Look for performance metrics, novel architectures, ablation studies
+  - Crypto papers: Look for security guarantees, attack scenarios, protocols
+- Register tool with all specialized agents
+
+**Test**: Different agents extract results from papers in their domains, verify domain-specific insights
+
+### Step 5.3: Impact Assessment Tool
+**Objective**: Create LLM-powered tool for agents to evaluate research significance
+
+**Tasks**:
+- Create `src/agents/tools/impact_assessment_tool.py`
+- Implement `assess_impact_tool(paper, results, field_context=None)` as agent-callable tool:
+  - Uses LLM to analyze paper's impact and significance
+  - Tool guides agents to evaluate: novelty, applications, theoretical importance, practical value
+  - Returns structured assessment: {
+      novelty_score,
+      solves_open_problem,
+      introduces_new_techniques,
+      potential_applications,
+      community_impact,
+      impact_summary
+    }
+  - Specialized agents can provide field context to improve assessment
+- Extend `PaperAnalyzer` class:
+  - `assess_impact(paper, results, field_context)` - Core assessment logic
+  - LLM-based analysis of:
+    - Discussion/conclusion sections for author's claims
+    - Novelty of approach compared to related work
+    - Theoretical vs practical contributions
+    - Potential for follow-up research
+  - `generate_impact_narrative(assessment)` - Create readable summary
+- Implement agent collaboration for impact assessment:
+  - Specialized agent uses domain knowledge to contextualize impact
+  - Can request hand-off to other agents for cross-domain assessment
+  - Example: ML paper with algebraic techniques → Abdoulaye hands off to Alain for algebraic impact
+- Register tool with all agents, enable cross-domain consultation
+
+**Test**: Agent assesses impact for 3 papers, can request hand-offs to domain experts for specialized evaluation
+
+## Phase 6: AI Agent-Powered One-Pager Generation
+
+### Step 6.1: Multi-Agent Content Synthesis with Hand-offs
+**Objective**: Orchestrate specialized agents to create comprehensive summaries
+
+**Tasks**:
+- Create `src/agents/tools/synthesis_tools.py`
+- Implement synthesis tools for agent collaboration:
+  - `create_topic_overview_tool(topic, papers, analyses)` - Synthesize topic summary
+  - `create_paper_summary_tool(paper, analysis, style="balanced")` - Summarize individual paper
+  - `generate_expert_explanation_tool(content, domain)` - Technical version for experts
+  - `generate_layperson_explanation_tool(content, metaphors=None)` - Accessible version for non-experts
+  - `review_and_refine_tool(content, criteria)` - Quality check and improvement
+- Create `src/generation/synthesizer.py` with LLM-powered synthesis:
+  - `ContentSynthesizer` class with LLM client
+  - Implements underlying logic for synthesis tools
+  - Uses agent expertise in prompts (e.g., Michel's metaphors for layperson explanations)
+- Implement agent workflow for one-pager generation:
+  - **Step 1**: Julius delegates topic summaries to specialized agents based on domain
+  - **Step 2**: Each agent (e.g., Abdoulaye for ML topics) uses synthesis tools to:
+    - Create expert-level summary using domain knowledge
+    - Generate accessible explanation
+  - **Step 3**: Michel (explanation expert) reviews layperson explanations:
+    - Hand-off from specialist agents to Michel
+    - Michel adds metaphors and intuitive explanations
+    - Returns refined content to Julius
+  - **Step 4**: Julius compiles all summaries into coherent one-pager
+- Implement hand-off protocol for content refinement:
+  - `HandoffContext` includes: original content, target audience, refinement goals
+  - Agents can request reviews from other agents (e.g., ask Michel for better metaphors)
+- Register tools with appropriate agents based on expertise
+
+**Test**: Julius coordinates multi-agent workflow to generate one-pager with domain-specific summaries and Michel's explanatory refinements
+
+### Step 6.2: Document Formatting Tool
+**Objective**: Create formatting tool for agents to structure final output
+
+**Tasks**:
+- Create `src/agents/tools/formatting_tool.py`
+- Implement `format_document_tool(content, format="markdown", style="professional")` as agent-callable tool:
+  - Takes synthesized content and applies formatting
+  - Supports multiple output formats: Markdown, HTML, PDF
+  - Tool description helps Julius understand formatting options
+- Create `src/generation/formatter.py`:
+  - `DocumentFormatter` class with template engine
+  - Design one-pager template structure:
+    - Header: Title, date range, agent credits (acknowledges which agents contributed)
+    - Executive summary (2-3 sentences) - Generated by Julius
+    - Topic sections (3-5 topics max):
+      - Topic title and overview
+      - Top representative papers with problem/results/impact
+      - Dual-level explanations (expert + non-expert)
+      - Attribution to contributing agents
+    - Footer: Methodology note and agent collaboration summary
+  - `apply_template(content, template_name)` - Fill template with content
+  - `render_to_format(template, output_format)` - Convert to desired format
+- Implement styling:
+  - Professional CSS for HTML output
+  - LaTeX styling for PDF (using pandoc or reportlab)
+  - Readable Markdown with proper headings and structure
+- Add `validate_format_tool(document)`:
+  - Checks document structure and completeness
+  - Verifies all required sections are present
+  - Returns validation report for Julius to review
+- Register tools with Julius (he orchestrates final formatting)
+
+**Test**: Julius uses formatting tool to create one-pager in multiple formats, validates structure
+
+### Step 6.3: AI-Powered Quality Assurance Tool
+**Objective**: Create validation tool for agents to ensure quality standards
+
+**Tasks**:
+- Create `src/agents/tools/quality_check_tool.py`
+- Implement `validate_quality_tool(document, criteria=None)` as agent-callable tool:
+  - Performs automated quality checks on generated content
+  - Returns detailed quality report with scores and suggestions
+  - Tool description helps Julius understand quality metrics
+- Create `src/generation/validator.py`:
+  - `DocumentValidator` class with LLM-powered validation
+  - Automated quality checks:
+    - Readability scores (Flesch-Kincaid for different audience levels)
+    - Length constraints (one page ~500-800 words, sections balanced)
+    - Citation accuracy (verify all referenced papers are in dataset)
+    - Fact consistency (LLM checks for contradictions across sections)
+    - Technical accuracy (domain-specific validation)
+  - `generate_improvement_suggestions(validation_report)` - LLM suggests fixes
+- Implement agent-based quality review workflow:
+  - Julius runs initial validation after compiling one-pager
+  - If quality issues found, Julius can:
+    - Hand off sections back to specialist agents for revision
+    - Request Michel to improve clarity of layperson explanations
+    - Ask specific agents to verify technical accuracy in their domain
+  - Iterative refinement until quality standards met
+- Add `human_review_tool()`:
+  - Flags content that needs human review
+  - Identifies controversial claims or uncertain extractions
+  - Creates review checklist for human editor
+- Register quality check tool with Julius and enable review hand-offs
+
+**Test**: Julius validates one-pager, identifies issues, hands off to agents for fixes, re-validates until quality threshold met
 
 ## Phase 7: Email Integration
 

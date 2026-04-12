@@ -12,6 +12,7 @@ A multi-agent system for generating comprehensive one-pagers about the latest re
 - **Elisa** (Elisa Gorla) - Applied Math & Cryptography
 - **Felix** (Felix Schlenk) - Dynamical Systems & Symplectic Geometry
 - **Abdoulaye** (Abdoulaye Sakho) - Machine Learning
+- **JeanBaptiste** - Data Science, NLP, LLM & Agentic AI
 
 ## Features
 
@@ -142,10 +143,10 @@ arxiv-editor/
 - Configuration management
 - CLI interface
 
-**Phase 2: ArXiv Data Fetching** 🚧 In Progress
+**Phase 2: ArXiv Data Fetching** ✅ COMPLETED
 - ✅ Step 2.1: Basic API integration (`ArxivFetcher` class with `fetch_by_category`, `parse_paper_metadata`)
-- Step 2.2: Multi-category fetching with minimum threshold
-- Step 2.3: PDF retrieval
+- ✅ Step 2.2: Multi-category fetching with minimum threshold
+- ✅ Step 2.3: PDF retrieval (`download_paper_pdf`, `extract_text_from_pdf`, `download_and_extract_paper`)
 
 **Phase 3-10**: See CONTEXT.md for full implementation plan
 

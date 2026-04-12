@@ -6,12 +6,16 @@ to fetch research papers with proper rate limiting and error handling.
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 import arxiv
+import requests
+from pypdf import PdfReader
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,18 @@ class ArxivFetcherError(Exception):
 
 class RateLimitError(ArxivFetcherError):
     """Raised when rate limit is hit."""
+
+    pass
+
+
+class PDFDownloadError(ArxivFetcherError):
+    """Raised when PDF download fails."""
+
+    pass
+
+
+class PDFExtractionError(ArxivFetcherError):
+    """Raised when PDF text extraction fails."""
 
     pass
 
@@ -157,7 +173,7 @@ class ArxivFetcher:
         category: str,
         start_date: datetime,
         end_date: Optional[datetime] = None,
-        max_results: int = 100,
+        max_results: int = 1000,
     ) -> List[Paper]:
         """
         Fetch papers from a specific ArXiv category within a date range.
@@ -271,7 +287,7 @@ class ArxivFetcher:
         categories: List[str],
         start_date: datetime,
         end_date: Optional[datetime] = None,
-        max_results_per_category: int = 100,
+        max_results_per_category: int = 1000,
     ) -> List[Paper]:
         """
         Fetch papers from multiple ArXiv categories.
@@ -318,7 +334,7 @@ class ArxivFetcher:
         start_date: datetime,
         end_date: Optional[datetime] = None,
         min_count: int = 100,
-        max_results_per_category: int = 200,
+        max_results_per_category: int = 1000,
         expansion_days: int = 7,
         max_expansions: int = 4,
     ) -> tuple[List[Paper], datetime, datetime]:
@@ -422,3 +438,195 @@ class ArxivFetcher:
         raise ArxivFetcherError(
             f"Unexpected error: exceeded max expansions without meeting threshold"
         )
+
+    def download_paper_pdf(
+        self,
+        paper_id: str,
+        output_dir: str = "data/pdfs",
+        force_redownload: bool = False,
+    ) -> Path:
+        """
+        Download a paper's PDF file from ArXiv.
+
+        Args:
+            paper_id: The ArXiv ID of the paper (e.g., "2301.12345").
+            output_dir: Directory to save the PDF. Defaults to "data/pdfs".
+            force_redownload: If True, redownload even if file exists.
+
+        Returns:
+            Path to the downloaded PDF file.
+
+        Raises:
+            PDFDownloadError: If the download fails after retries.
+        """
+        # Create output directory if it doesn't exist
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Sanitize paper_id for use as filename (replace '/' with '_')
+        safe_paper_id = paper_id.replace("/", "_")
+        pdf_file_path = output_path / f"{safe_paper_id}.pdf"
+
+        # Check if file already exists and caching is enabled
+        if pdf_file_path.exists() and not force_redownload:
+            logger.info(f"PDF already cached for paper {paper_id}: {pdf_file_path}")
+            return pdf_file_path
+
+        # Construct PDF URL
+        # ArXiv PDF URLs: https://arxiv.org/pdf/{paper_id}.pdf
+        # https://arxiv.org/pdf/2603.23460v1.pdf
+        pdf_url = f"https://arxiv.org/pdf/{paper_id}.pdf"
+
+        logger.info(f"Downloading PDF for paper {paper_id} from {pdf_url}")
+
+        retries = 0
+        while retries <= self.max_retries:
+            try:
+                # Respect rate limiting
+                self._wait_for_rate_limit()
+
+                # Download the PDF
+                response = requests.get(
+                    pdf_url,
+                    timeout=60,  # 60 second timeout
+                    stream=True,  # Stream to handle large files
+                    headers={"User-Agent": "ArxivFetcher/1.0 (Research Tool)"},
+                )
+
+                # Check if request was successful
+                response.raise_for_status()
+
+                # Write PDF to file
+                with open(pdf_file_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+
+                logger.info(f"Successfully downloaded PDF for paper {paper_id} to {pdf_file_path}")
+                return pdf_file_path
+
+            except requests.exceptions.HTTPError as e:
+                retries += 1
+                if retries > self.max_retries:
+                    logger.error(f"Max retries exceeded downloading PDF for paper {paper_id}: {e}")
+                    raise PDFDownloadError(
+                        f"Failed to download PDF for paper {paper_id} after {self.max_retries} retries: {e}"
+                    ) from e
+
+                logger.warning(
+                    f"HTTP error downloading PDF for paper {paper_id} "
+                    f"(attempt {retries}/{self.max_retries}): {e}"
+                )
+                time.sleep(self.retry_delay * retries)
+
+            except requests.exceptions.RequestException as e:
+                retries += 1
+                if retries > self.max_retries:
+                    logger.error(f"Network error downloading PDF for paper {paper_id}: {e}")
+                    raise PDFDownloadError(
+                        f"Network error downloading PDF for paper {paper_id}: {e}"
+                    ) from e
+
+                logger.warning(
+                    f"Request error downloading PDF for paper {paper_id} "
+                    f"(attempt {retries}/{self.max_retries}): {e}"
+                )
+                time.sleep(self.retry_delay * retries)
+
+            except Exception as e:
+                logger.error(f"Unexpected error downloading PDF for paper {paper_id}: {e}")
+                raise PDFDownloadError(
+                    f"Unexpected error downloading PDF for paper {paper_id}: {e}"
+                ) from e
+
+        # This should not be reached
+        raise PDFDownloadError(f"Failed to download PDF for paper {paper_id}")
+
+    def extract_text_from_pdf(self, pdf_path: Path) -> str:
+        """
+        Extract text content from a PDF file.
+
+        Args:
+            pdf_path: Path to the PDF file.
+
+        Returns:
+            Extracted text content as a string.
+
+        Raises:
+            PDFExtractionError: If text extraction fails.
+        """
+        if not pdf_path.exists():
+            raise PDFExtractionError(f"PDF file not found: {pdf_path}")
+
+        logger.info(f"Extracting text from PDF: {pdf_path}")
+
+        try:
+            reader = PdfReader(str(pdf_path))
+
+            # Extract text from all pages
+            text_parts = []
+            for page_num, page in enumerate(reader.pages, start=1):
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_parts.append(page_text)
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from page {page_num}: {e}")
+                    continue
+
+            # Combine all text
+            full_text = "\n\n".join(text_parts)
+
+            # Check if we got any text
+            if not full_text.strip():
+                raise PDFExtractionError(f"No text extracted from PDF: {pdf_path}")
+
+            logger.info(
+                f"Successfully extracted {len(full_text)} characters from "
+                f"{len(reader.pages)} pages in {pdf_path.name}"
+            )
+
+            return full_text
+
+        except PDFExtractionError:
+            # Re-raise our custom errors
+            raise
+
+        except Exception as e:
+            logger.error(f"Failed to extract text from PDF {pdf_path}: {e}")
+            raise PDFExtractionError(f"Failed to extract text from PDF {pdf_path}: {e}") from e
+
+    def download_and_extract_paper(
+        self,
+        paper_id: str,
+        output_dir: str = "data/pdfs",
+        force_redownload: bool = False,
+    ) -> tuple[Path, str]:
+        """
+        Download a paper's PDF and extract its text content.
+
+        Convenience method that combines download_paper_pdf and extract_text_from_pdf.
+
+        Args:
+            paper_id: The ArXiv ID of the paper (e.g., "2301.12345").
+            output_dir: Directory to save the PDF. Defaults to "data/pdfs".
+            force_redownload: If True, redownload even if file exists.
+
+        Returns:
+            A tuple containing:
+                - Path to the downloaded PDF file
+                - Extracted text content as a string
+
+        Raises:
+            PDFDownloadError: If the download fails.
+            PDFExtractionError: If text extraction fails.
+        """
+        pdf_path = self.download_paper_pdf(
+            paper_id=paper_id,
+            output_dir=output_dir,
+            force_redownload=force_redownload,
+        )
+
+        text = self.extract_text_from_pdf(pdf_path)
+
+        return pdf_path, text
