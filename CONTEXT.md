@@ -375,106 +375,220 @@ The plan addresses all requirements from the project description including the m
 
 **Test**: Agent assesses impact for 3 papers, can request hand-offs to domain experts for specialized evaluation
 
-## Phase 6: AI Agent-Powered One-Pager Generation
+## Phase 6: Interactive Julius Summary Generation
 
-### Step 6.1: Multi-Agent Content Synthesis with Hand-offs
-**Objective**: Orchestrate specialized agents to create comprehensive summaries
+### Step 6.1: User Request Intake and Preference Model
+**Objective**: Let the user tell Julius what kind of research summary they want before the agents start writing.
+
+**Tasks**:
+- Create `src/generation/user_request.py`
+- Define a `SummaryRequest` Pydantic model:
+  - `topic_query`: optional free-text research interest such as "LLM agents", "probability", or "cryptography"
+  - `date_range`: explicit dates or relative ranges such as "last week" or "last month"
+  - `audience`: `expert`, `non_expert`, or `mixed`
+  - `depth`: `brief`, `standard`, or `deep`
+  - `tone`: `editorial`, `technical`, `pedagogical`, or `executive`
+  - `format`: `one_pager`, `bullet_digest`, `paper_rankings`, or `custom`
+  - `max_topics`, `max_papers`, `must_include_categories`, `exclude_categories`
+  - `delivery`: preview only, save to file, or email
+- Implement `parse_user_request_tool(message, defaults)`:
+  - Extracts the user's desired scope, audience, date range, and output format
+  - Applies sensible defaults when the user is vague
+  - Returns missing or ambiguous fields that Julius should clarify
+- Implement `clarify_request_tool(summary_request)`:
+  - Generates at most 3 focused follow-up questions
+  - Avoids asking questions when defaults are enough to proceed
+- Add request persistence in the session so Julius can remember user preferences across refinement turns.
+
+**Test**: Julius parses user requests such as "Give me a non-technical summary of last week's LLM agent papers" and produces a complete `SummaryRequest`, asking a clarification only when required.
+
+### Step 6.2: Julius Conversation Session
+**Objective**: Build an interactive loop where the user can talk with Julius and steer the desired summary.
+
+**Tasks**:
+- Create `src/agents/julius_session.py`
+- Implement `JuliusSession`:
+  - Maintains conversation history, current `SummaryRequest`, generated drafts, and user feedback
+  - Exposes `handle_user_message(message)` as the main entry point
+  - Returns structured responses with `message`, `state`, `summary_request`, `draft_preview`, `actions_taken`, and `next_questions`
+  - Supports session states: `INTAKE`, `CLARIFYING`, `PLANNING`, `GENERATING`, `AWAITING_REVIEW`, `REVISING`, `FINALIZED`
+- Add Julius intents:
+  - New summary request
+  - Preference update ("make it shorter", "more technical", "focus on applications")
+  - Scope update ("only cs.AI", "remove algebra", "include last 14 days")
+  - Draft question ("why did you choose this paper?", "what is the main result?")
+  - Finalization ("save this", "email it")
+- Implement intent classification:
+  - `classify_user_intent_tool(message, session_state)` routes each message to request intake, clarification, generation, revision, question answering, or finalization
+  - Falls back to asking a concise clarification when Julius cannot infer the intent
+- Implement `update_summary_request_tool(existing_request, user_feedback)`:
+  - Converts feedback into structured changes
+  - Keeps previous preferences unless the user overrides them
+- Implement `explain_draft_choice_tool(draft, question)`:
+  - Lets Julius answer questions about selected topics, papers, rankings, and omissions
+- Implement response streaming/progress hooks:
+  - Julius can tell the user when papers are being fetched, topics are being modeled, specialists are reviewing, and the draft is being compiled
+  - Status messages remain short and do not expose internal tool noise
+- Add a CLI command or interactive mode:
+  - `python main.py chat`
+  - User can converse with Julius until the summary is finalized
+  - Julius shows short status messages when delegating to specialist agents
+
+**Test**: In a single interactive session, the user can request a summary, revise the audience/depth/scope, ask why a paper was selected, and finalize the output without restarting the workflow.
+
+### Step 6.3: Multi-Agent Draft Generation with Hand-offs
+**Objective**: Have Julius coordinate specialist agents to produce the first draft according to the user's preferences.
 
 **Tasks**:
 - Create `src/agents/tools/synthesis_tools.py`
 - Implement synthesis tools for agent collaboration:
-  - `create_topic_overview_tool(topic, papers, analyses)` - Synthesize topic summary
-  - `create_paper_summary_tool(paper, analysis, style="balanced")` - Summarize individual paper
+  - `create_topic_overview_tool(topic, papers, analyses, summary_request)` - Synthesize topic summary for the requested audience and depth
+  - `create_paper_summary_tool(paper, analysis, summary_request)` - Summarize one representative paper according to user preferences
   - `generate_expert_explanation_tool(content, domain)` - Technical version for experts
   - `generate_layperson_explanation_tool(content, metaphors=None)` - Accessible version for non-experts
+  - `rank_summary_items_tool(items, ranking_goal)` - Rank papers/topics by relevance, impact, novelty, or user interest
   - `review_and_refine_tool(content, criteria)` - Quality check and improvement
-- Create `src/generation/synthesizer.py` with LLM-powered synthesis:
+- Create `src/generation/synthesizer.py`:
   - `ContentSynthesizer` class with LLM client
-  - Implements underlying logic for synthesis tools
-  - Uses agent expertise in prompts (e.g., Michel's metaphors for layperson explanations)
-- Implement agent workflow for one-pager generation:
-  - **Step 1**: Julius delegates topic summaries to specialized agents based on domain
-  - **Step 2**: Each agent (e.g., Abdoulaye for ML topics) uses synthesis tools to:
-    - Create expert-level summary using domain knowledge
-    - Generate accessible explanation
-  - **Step 3**: Michel (explanation expert) reviews layperson explanations:
-    - Hand-off from specialist agents to Michel
-    - Michel adds metaphors and intuitive explanations
-    - Returns refined content to Julius
-  - **Step 4**: Julius compiles all summaries into coherent one-pager
-- Implement hand-off protocol for content refinement:
-  - `HandoffContext` includes: original content, target audience, refinement goals
-  - Agents can request reviews from other agents (e.g., ask Michel for better metaphors)
-- Register tools with appropriate agents based on expertise
+  - Converts agent analyses into structured draft sections
+  - Uses `SummaryRequest` to control length, tone, terminology, topic count, and explanation style
+- Implement Julius workflow for draft generation:
+  - Julius creates an execution plan from `SummaryRequest`
+  - Julius delegates topic summaries to specialized agents based on ArXiv categories and detected research area
+  - Each specialist creates expert-level findings and flags uncertain claims
+  - Michel reviews explanations when the requested audience is `non_expert` or `mixed`
+  - Julius compiles the first draft and records why each topic and paper was included
+- Implement hand-off context for content generation:
+  - `HandoffContext` includes the user request, selected papers, target audience, domain, draft constraints, and previous feedback
+  - Agents return structured sections plus confidence notes
+- Register synthesis tools with Julius and the specialist agents.
 
-**Test**: Julius coordinates multi-agent workflow to generate one-pager with domain-specific summaries and Michel's explanatory refinements
+**Test**: Julius generates a first draft that respects requested topic, date range, audience, depth, and format, with visible provenance for selected papers.
 
-### Step 6.2: Document Formatting Tool
-**Objective**: Create formatting tool for agents to structure final output
+### Step 6.4: User-Guided Revision Loop
+**Objective**: Let the user refine the draft until it matches what they want.
+
+**Tasks**:
+- Create `src/generation/revision.py`
+- Implement `RevisionRequest` model:
+  - `target`: whole document, section, topic, paper, title, or explanation level
+  - `operation`: shorten, expand, simplify, make technical, change tone, add/remove topic, rerank, regenerate
+  - `instructions`: free-text user feedback
+- Implement `parse_revision_request_tool(user_feedback, current_draft)`:
+  - Converts natural language feedback into a structured revision request
+  - Detects whether new data fetching or agent re-analysis is required
+- Implement `revise_draft_tool(draft, revision_request, summary_request)`:
+  - Applies local edits when possible
+  - Triggers Julius hand-offs when the feedback requires specialist review
+  - Preserves citations, paper metadata, and provenance
+- Add draft versioning:
+  - Save each draft as `draft_v1`, `draft_v2`, etc.
+  - Store change summaries so Julius can explain what changed
+  - Allow rollback to a previous draft if the user prefers it
+- Add final approval step:
+  - Julius asks for confirmation before saving or emailing
+  - Final output is marked immutable unless the user starts another revision
+
+**Test**: User feedback such as "make the first topic more intuitive", "remove cryptography", or "give me a deeper expert version" produces a revised draft while preserving paper references and workflow state.
+
+### Step 6.5: Formatting, Quality Assurance, and Final Output
+**Objective**: Format, validate, and deliver the approved summary.
 
 **Tasks**:
 - Create `src/agents/tools/formatting_tool.py`
-- Implement `format_document_tool(content, format="markdown", style="professional")` as agent-callable tool:
-  - Takes synthesized content and applies formatting
-  - Supports multiple output formats: Markdown, HTML, PDF
-  - Tool description helps Julius understand formatting options
+- Implement `format_document_tool(content, format="markdown", style="professional")`:
+  - Supports Markdown first, then HTML and PDF
+  - Formats according to `SummaryRequest.format`
+  - Includes title, date range, generated-at timestamp, selected topics, representative papers, and agent credits
 - Create `src/generation/formatter.py`:
   - `DocumentFormatter` class with template engine
-  - Design one-pager template structure:
-    - Header: Title, date range, agent credits (acknowledges which agents contributed)
-    - Executive summary (2-3 sentences) - Generated by Julius
-    - Topic sections (3-5 topics max):
-      - Topic title and overview
-      - Top representative papers with problem/results/impact
-      - Dual-level explanations (expert + non-expert)
-      - Attribution to contributing agents
-    - Footer: Methodology note and agent collaboration summary
-  - `apply_template(content, template_name)` - Fill template with content
-  - `render_to_format(template, output_format)` - Convert to desired format
-- Implement styling:
-  - Professional CSS for HTML output
-  - LaTeX styling for PDF (using pandoc or reportlab)
-  - Readable Markdown with proper headings and structure
-- Add `validate_format_tool(document)`:
-  - Checks document structure and completeness
-  - Verifies all required sections are present
-  - Returns validation report for Julius to review
-- Register tools with Julius (he orchestrates final formatting)
+  - Templates for `one_pager`, `bullet_digest`, `paper_rankings`, and `custom`
+  - `apply_template(content, template_name)`
+  - `render_to_format(template, output_format)`
+- Create `src/agents/tools/quality_check_tool.py`
+- Implement `validate_quality_tool(document, summary_request, source_papers)`:
+  - Checks completeness against user preferences
+  - Checks length constraints for the requested format
+  - Verifies citations and paper metadata against fetched papers
+  - Checks that expert/non-expert explanations match the requested audience
+  - Flags uncertain claims for human review
+- Create `src/generation/validator.py`:
+  - `DocumentValidator` class with deterministic checks first and LLM checks second
+  - `generate_improvement_suggestions(validation_report)`
+- Julius quality workflow:
+  - Validate the draft before showing it to the user
+  - Validate again after each major revision
+  - Show concise warnings when confidence is low or a claim needs review
+  - Save the final document to `outputs/`
+  - Hand off to Phase 7 email delivery if requested
 
-**Test**: Julius uses formatting tool to create one-pager in multiple formats, validates structure
+**Test**: Julius formats an approved summary, validates it against the user's preferences, saves it to `outputs/`, and optionally passes it to the email workflow.
 
-### Step 6.3: AI-Powered Quality Assurance Tool
-**Objective**: Create validation tool for agents to ensure quality standards
+### Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
+**Objective**: Provide a simple web app where the user can interact with Julius, refine the requested summary conversationally, preview drafts, and finalize the desired result.
 
 **Tasks**:
-- Create `src/agents/tools/quality_check_tool.py`
-- Implement `validate_quality_tool(document, criteria=None)` as agent-callable tool:
-  - Performs automated quality checks on generated content
-  - Returns detailed quality report with scores and suggestions
-  - Tool description helps Julius understand quality metrics
-- Create `src/generation/validator.py`:
-  - `DocumentValidator` class with LLM-powered validation
-  - Automated quality checks:
-    - Readability scores (Flesch-Kincaid for different audience levels)
-    - Length constraints (one page ~500-800 words, sections balanced)
-    - Citation accuracy (verify all referenced papers are in dataset)
-    - Fact consistency (LLM checks for contradictions across sections)
-    - Technical accuracy (domain-specific validation)
-  - `generate_improvement_suggestions(validation_report)` - LLM suggests fixes
-- Implement agent-based quality review workflow:
-  - Julius runs initial validation after compiling one-pager
-  - If quality issues found, Julius can:
-    - Hand off sections back to specialist agents for revision
-    - Request Michel to improve clarity of layperson explanations
-    - Ask specific agents to verify technical accuracy in their domain
-  - Iterative refinement until quality standards met
-- Add `human_review_tool()`:
-  - Flags content that needs human review
-  - Identifies controversial claims or uncertain extractions
-  - Creates review checklist for human editor
-- Register quality check tool with Julius and enable review hand-offs
+- Add Streamlit as the first interactive UI:
+  - Add `streamlit` to `requirements.txt`
+  - Create `app.py` as the local Streamlit entry point
+  - Create `src/ui/streamlit_app.py` for UI composition so the app stays thin and testable
+  - Run locally with `streamlit run app.py`
+- Create `src/generation/interactive_workflow.py`
+- Implement `InteractiveSummaryWorkflow`:
+  - Accepts a `JuliusSession`, configured agents, fetcher/topic/analysis tools, and output services
+  - Orchestrates the full flow: intake → clarification → planning → data collection → specialist analysis → draft generation → user review → revision → final output
+  - Keeps workflow state resumable so an interrupted session can continue without losing the request or latest draft
+- Build the Streamlit interaction model:
+  - Use `st.session_state` to hold `JuliusSession`, `SummaryRequest`, workflow state, draft versions, validation reports, and final output path
+  - Use `st.chat_message` and `st.chat_input` for natural conversation with Julius
+  - Show Julius progress updates with `st.status` or `st.progress` while fetching, analyzing, drafting, revising, and validating
+  - Keep long-running work behind explicit user actions such as "Generate draft", "Revise draft", "Validate", and "Finalize"
+- Add sidebar controls for explicit preferences:
+  - Topic/query input
+  - Date range selector and quick choices such as last week, last month, custom range
+  - Audience selector: expert, non-expert, mixed
+  - Depth selector: brief, standard, deep
+  - Tone selector: editorial, technical, pedagogical, executive
+  - Output format selector: one-pager, bullet digest, paper rankings, custom
+  - Category include/exclude multiselects
+  - Max topics and max papers sliders
+- Add draft review UI:
+  - Main preview tab for the formatted summary
+  - Metadata tab showing selected papers, ArXiv categories, date range, and contributing agents
+  - Quality tab showing validation warnings, confidence notes, and missing information
+  - Revision history tab showing draft versions and change summaries
+  - Buttons for approving, saving, downloading Markdown/HTML, or sending to Phase 7 email later
+- Define Julius' user-facing contract:
+  - Julius acknowledges the interpreted request before starting expensive work
+  - Julius states any assumptions, such as default date range or audience, in plain language
+  - Julius asks only necessary clarification questions
+  - Julius offers the draft for review before final save/email
+  - Julius can explain why topics or papers were included or excluded
+- Add summary desire matching:
+  - Track `satisfaction_signals` from user feedback, such as accepted draft, requested changes, rejected sections, and repeated preferences
+  - Stop revising only when the user approves the summary or explicitly asks to finalize
+  - Record final preferences for future sessions when persistence is enabled
+- Implement workflow-level error recovery:
+  - If fetching fails, Julius explains what failed and offers a retry, narrower scope, or cached/partial summary
+  - If too few papers are found, Julius proposes expanding the date range or broadening categories
+  - If an agent fails, Julius can continue with available results and flag the limitation
+- Add integration tests with mocked tools:
+  - Full happy path: user asks for a mixed-audience LLM agent summary, Julius generates a draft, user asks for a shorter version, Julius finalizes it
+  - Clarification path: vague request triggers at most 3 questions, then proceeds after answers
+  - Revision path: user changes audience, topic scope, and output format without restarting
+  - Failure path: paper fetching failure produces a recoverable Julius response
+- Add Streamlit-focused tests and checks:
+  - Unit-test UI adapter functions without launching a browser
+  - Smoke-test that `app.py` imports and builds the page without requiring API keys
+  - Verify session state survives reruns for request, draft, and revision history
+  - Verify mocked workflow failures appear as recoverable Julius messages in the UI
+- Add README/UI documentation:
+  - Show example `streamlit run app.py`
+  - Show example `python main.py chat`
+  - Include a short transcript demonstrating request, clarification, draft review, revision, and finalization
+  - Include a screenshot or description of the Streamlit layout once the UI is implemented
 
-**Test**: Julius validates one-pager, identifies issues, hands off to agents for fixes, re-validates until quality threshold met
+**Test**: A mocked Streamlit workflow proves that the user can interact with Julius, adjust preferences, generate and preview a draft, request revisions, ask explanatory questions, validate quality, and finalize/download the summary they want.
 
 ## Phase 7: Email Integration
 
