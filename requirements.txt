@@ -5,7 +5,7 @@ arxiv==2.1.0
 # bertopic==0.16.0
 
 # Text Embeddings
-# sentence-transformers==2.2.2
+sentence-transformers==5.4.1
 
 # Data Validation
 pydantic==2.5.0

@@ -153,7 +153,12 @@ arxiv-editor/
 - ✅ Step 3.2: Specialized Agent Implementations with Custom System Prompts
 - ✅ Step 3.3: Julius Coordinator Agent with Hand-offs
 
-**Phase 4-10**: See CONTEXT.md for full implementation plan
+**Phase 4: Text Processing & Topic Modeling**
+- ✅ Step 4.1: Text Embedding Tool
+- Step 4.2: Topic Discovery Tool with BERTopic
+- Step 4.3: Representative Paper Selection Tool
+
+**Phase 5-10**: See CONTEXT.md for full implementation plan
 
 ## Testing
 
@@ -207,6 +212,27 @@ The coordination tools are also available through the normal agent tool system:
 `delegate_to_agent_tool`, `request_agent_extension_tool`,
 `collect_agent_results_tool`, `compile_one_pager_tool`, and `send_email_tool`.
 Email sending is side-effect free unless an `email_sender` callable is injected.
+
+## Text Embeddings
+
+Step 4.1 adds `TextEmbedder` and `EmbeddingCache` in `src/processing/embedder.py`
+plus the agent-callable `embed_text_tool`. The tool uses
+`sentence-transformers` with `all-MiniLM-L6-v2`, batches uncached texts, and
+stores vectors in a pickle cache keyed by text hash and model name.
+
+```python
+from src.agents.tools import embed_text_tool
+
+result = embed_text_tool(
+    texts=["We prove a convergence theorem.", "A new language model benchmark."],
+    batch_size=32,
+)
+
+print(result["embedding_count"], result["dimension"])
+```
+
+Specialized agents inherit the tool through `get_base_tools()`, so any
+specialist can call `embed_text_tool` before topic modeling or paper selection.
 
 ## License
 
