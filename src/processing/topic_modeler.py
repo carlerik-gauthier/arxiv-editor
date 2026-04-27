@@ -14,6 +14,8 @@ from src.processing.embedder import DEFAULT_EMBEDDING_MODEL, TextEmbedder
 
 DEFAULT_REPRESENTATIVE_PAPERS = 5
 DEFAULT_TOPIC_REPRESENTATION_MODEL = "gpt-4o-mini"
+DEFAULT_MMR_DIVERSITY = 0.3
+DEFAULT_MMR_TOP_N_WORDS = 10
 DEFAULT_TOPIC_REPRESENTATION_PROMPT = """
 I have a topic that contains the following documents:
 [DOCUMENTS]
@@ -64,6 +66,9 @@ class TopicModeler:
         openai_api_key: API key used to create an OpenAI client when needed.
         openai_client: Optional injected OpenAI-compatible client for tests.
         use_openai_representation: Whether BERTopic should label topics with OpenAI.
+        use_mmr_representation: Whether BERTopic should diversify topic keywords with MMR.
+        mmr_diversity: Diversity weight for MaximalMarginalRelevance.
+        mmr_top_n_words: Number of words retained by MaximalMarginalRelevance.
     """
 
     def __init__(
@@ -76,6 +81,9 @@ class TopicModeler:
         openai_api_key: Optional[str] = None,
         openai_client: Optional[Any] = None,
         use_openai_representation: bool = True,
+        use_mmr_representation: bool = True,
+        mmr_diversity: float = DEFAULT_MMR_DIVERSITY,
+        mmr_top_n_words: int = DEFAULT_MMR_TOP_N_WORDS,
     ) -> None:
         self.embedder = embedder or TextEmbedder(model_name=model_name)
         self._topic_model = topic_model
@@ -84,6 +92,9 @@ class TopicModeler:
         self.openai_api_key = openai_api_key
         self.openai_client = openai_client
         self.use_openai_representation = use_openai_representation
+        self.use_mmr_representation = use_mmr_representation
+        self.mmr_diversity = mmr_diversity
+        self.mmr_top_n_words = mmr_top_n_words
         self._last_topics: List[int] = []
         self._last_probabilities: Any = None
         self._last_records: List[PaperTopicRecord] = []
@@ -181,6 +192,7 @@ class TopicModeler:
             "representation_model": (
                 self.representation_model_name if self.use_openai_representation else None
             ),
+            "representation_models": self._representation_model_names(),
             "embedding": {
                 "dimension": embedding_result["dimension"],
                 "cache_hits": embedding_result["cache_hits"],
@@ -214,6 +226,7 @@ class TopicModeler:
 
         try:
             from bertopic import BERTopic
+            from bertopic.representation import MaximalMarginalRelevance
             from bertopic.representation import OpenAI as OpenAIRepresentation
             from bertopic.vectorizers import ClassTfidfTransformer
             from hdbscan import HDBSCAN
@@ -226,9 +239,15 @@ class TopicModeler:
             ) from exc
 
         representation_model = None
-        if self.use_openai_representation:
-            representation_model = self._build_openai_representation_model(
-                OpenAIRepresentation
+        representation_models = self._build_representation_models(
+            maximal_marginal_relevance_class=MaximalMarginalRelevance,
+            openai_representation_class=OpenAIRepresentation,
+        )
+        if representation_models:
+            representation_model = (
+                representation_models[0]
+                if len(representation_models) == 1
+                else representation_models
             )
 
         umap_model = UMAP(
@@ -257,6 +276,32 @@ class TopicModeler:
         )
         return self._topic_model
 
+    def _build_representation_models(
+        self,
+        maximal_marginal_relevance_class: Any,
+        openai_representation_class: Any,
+    ) -> List[Any]:
+        """
+        Build BERTopic representation models in execution order.
+
+        MMR runs first to diversify keyword candidates. OpenAI then receives the
+        diversified representation and generates the final short label with
+        `gpt-4o-mini`.
+        """
+        representation_models: List[Any] = []
+        if self.use_mmr_representation:
+            representation_models.append(
+                maximal_marginal_relevance_class(
+                    diversity=self.mmr_diversity,
+                    top_n_words=self.mmr_top_n_words,
+                )
+            )
+        if self.use_openai_representation:
+            representation_models.append(
+                self._build_openai_representation_model(openai_representation_class)
+            )
+        return representation_models
+
     def _build_openai_representation_model(self, openai_representation_class: Any) -> Any:
         """
         Build BERTopic's OpenAI representation model with gpt-4o-mini.
@@ -273,6 +318,15 @@ class TopicModeler:
             prompt=DEFAULT_TOPIC_REPRESENTATION_PROMPT,
             generator_kwargs={"temperature": 0},
         )
+
+    def _representation_model_names(self) -> List[str]:
+        """Return configured BERTopic representation model names for metadata."""
+        names: List[str] = []
+        if self.use_mmr_representation:
+            names.append("MaximalMarginalRelevance")
+        if self.use_openai_representation:
+            names.append(self.representation_model_name)
+        return names
 
     def _extract_keywords(
         self,

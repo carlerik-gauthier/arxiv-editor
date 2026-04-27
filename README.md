@@ -239,10 +239,11 @@ specialist can call `embed_text_tool` before topic modeling or paper selection.
 Step 4.2 adds `TopicModeler` in `src/processing/topic_modeler.py` and the
 agent-callable `discover_topics_tool` plus `generate_topic_title_tool`. The
 modeler embeds title/abstract text with `TextEmbedder`, passes those custom
-embeddings into BERTopic configured with UMAP, HDBSCAN, c-TF-IDF, and BERTopic's
+embeddings into BERTopic configured with UMAP, HDBSCAN, c-TF-IDF, BERTopic's
+`MaximalMarginalRelevance` representation for diverse keywords, and BERTopic's
 OpenAI `representation_model` using `gpt-4o-mini` for topic labels. It returns
-topic titles, keywords, representative papers, outlier counts, and progress
-metadata.
+topic titles, keywords, representative papers, outlier counts, representation
+metadata, and progress metadata.
 
 ```python
 from src.agents.tools import discover_topics_tool

@@ -16,6 +16,9 @@ def discover_topics_tool(
     batch_size: int = 32,
     representation_model_name: str = "gpt-4o-mini",
     use_openai_representation: bool = True,
+    use_mmr_representation: bool = True,
+    mmr_diversity: float = 0.3,
+    mmr_top_n_words: int = 10,
     openai_api_key: Optional[str] = None,
     topic_modeler: Optional[TopicModeler] = None,
 ) -> Dict[str, Any]:
@@ -30,6 +33,9 @@ def discover_topics_tool(
         representation_model_name=representation_model_name,
         openai_api_key=openai_api_key,
         use_openai_representation=use_openai_representation,
+        use_mmr_representation=use_mmr_representation,
+        mmr_diversity=mmr_diversity,
+        mmr_top_n_words=mmr_top_n_words,
     )
     try:
         return modeler.extract_topics(

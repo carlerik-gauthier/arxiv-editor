@@ -76,6 +76,21 @@ class Settings(BaseSettings):
         default=True,
         description="Use BERTopic's OpenAI representation_model for topic labels",
     )
+    use_mmr_topic_representation: bool = Field(
+        default=True,
+        description="Use BERTopic MaximalMarginalRelevance to diversify topic keywords",
+    )
+    mmr_diversity: float = Field(
+        default=0.3,
+        description="Diversity value for BERTopic MaximalMarginalRelevance",
+        ge=0.0,
+        le=1.0,
+    )
+    mmr_top_n_words: int = Field(
+        default=10,
+        description="Number of topic words retained by MaximalMarginalRelevance",
+        ge=1,
+    )
     # TODO: check Arxiv tags
     # Agent ArXiv Categories Configuration
     agent_categories: Dict[str, List[str]] = Field(

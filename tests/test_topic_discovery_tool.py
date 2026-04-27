@@ -114,6 +114,7 @@ def test_topic_modeler_extracts_topics_with_representative_papers():
     assert result["topic_count"] == 2
     assert result["outlier_count"] == 5
     assert result["representation_model"] == "gpt-4o-mini"
+    assert result["representation_models"] == ["MaximalMarginalRelevance", "gpt-4o-mini"]
     assert result["embedding"]["cache_misses"] == 100
     assert [stage["stage"] for stage in result["progress"]] == [
         "normalize_papers",
@@ -222,6 +223,66 @@ def test_openai_representation_model_uses_gpt_4o_mini():
     assert captured["generator_kwargs"] == {"temperature": 0}
     assert "[DOCUMENTS]" in captured["prompt"]
     assert "[KEYWORDS]" in captured["prompt"]
+
+
+def test_representation_models_use_mmr_before_openai():
+    """TopicModeler composes MMR before OpenAI for BERTopic representations."""
+    created = []
+
+    class FakeMMR:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            created.append(("mmr", kwargs))
+
+    class FakeOpenAIRepresentation:
+        def __init__(self, client, **kwargs):
+            self.client = client
+            self.kwargs = kwargs
+            created.append(("openai", kwargs))
+
+    fake_client = object()
+    modeler = TopicModeler(
+        openai_client=fake_client,
+        mmr_diversity=0.55,
+        mmr_top_n_words=12,
+    )
+
+    representations = modeler._build_representation_models(
+        maximal_marginal_relevance_class=FakeMMR,
+        openai_representation_class=FakeOpenAIRepresentation,
+    )
+
+    assert len(representations) == 2
+    assert [name for name, _kwargs in created] == ["mmr", "openai"]
+    assert created[0][1] == {"diversity": 0.55, "top_n_words": 12}
+    assert created[1][1]["model"] == "gpt-4o-mini"
+
+
+def test_representation_models_can_disable_openai_or_mmr():
+    """Offline/debug configuration can independently disable representation models."""
+    class FakeMMR:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeOpenAIRepresentation:
+        def __init__(self, client, **kwargs):
+            self.client = client
+            self.kwargs = kwargs
+
+    mmr_only = TopicModeler(use_openai_representation=False)
+    openai_only = TopicModeler(
+        openai_client=object(),
+        use_mmr_representation=False,
+    )
+
+    assert len(
+        mmr_only._build_representation_models(FakeMMR, FakeOpenAIRepresentation)
+    ) == 1
+    assert mmr_only._representation_model_names() == ["MaximalMarginalRelevance"]
+    assert len(
+        openai_only._build_representation_models(FakeMMR, FakeOpenAIRepresentation)
+    ) == 1
+    assert openai_only._representation_model_names() == ["gpt-4o-mini"]
 
 
 def test_openai_representation_requires_api_key_when_no_client(monkeypatch):
