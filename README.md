@@ -155,7 +155,7 @@ arxiv-editor/
 
 **Phase 4: Text Processing & Topic Modeling**
 - ✅ Step 4.1: Text Embedding Tool
-- Step 4.2: Topic Discovery Tool with BERTopic
+- ✅ Step 4.2: Topic Discovery Tool with BERTopic
 - Step 4.3: Representative Paper Selection Tool
 
 **Phase 5-10**: See CONTEXT.md for full implementation plan
@@ -233,6 +233,35 @@ print(result["embedding_count"], result["dimension"])
 
 Specialized agents inherit the tool through `get_base_tools()`, so any
 specialist can call `embed_text_tool` before topic modeling or paper selection.
+
+## Topic Discovery
+
+Step 4.2 adds `TopicModeler` in `src/processing/topic_modeler.py` and the
+agent-callable `discover_topics_tool` plus `generate_topic_title_tool`. The
+modeler embeds title/abstract text with `TextEmbedder`, passes those custom
+embeddings into BERTopic configured with UMAP, HDBSCAN, c-TF-IDF, and BERTopic's
+OpenAI `representation_model` using `gpt-4o-mini` for topic labels. It returns
+topic titles, keywords, representative papers, outlier counts, and progress
+metadata.
+
+```python
+from src.agents.tools import discover_topics_tool
+
+topics = discover_topics_tool(
+    papers=[
+        {"title": "Diffusion models for graphs", "summary": "We study graph generation."},
+        {"title": "Convergence of Markov chains", "summary": "We prove mixing bounds."},
+    ],
+    min_topic_size=2,
+)
+
+print(topics["topic_count"])
+```
+
+Both topic tools are registered through `get_base_tools()`, so specialized
+agents can discover themes after fetching papers and embedding their abstracts.
+Set `OPENAI_API_KEY` before running real BERTopic topic discovery, or pass
+`use_openai_representation=False` for offline/debug runs.
 
 ## License
 

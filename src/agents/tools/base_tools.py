@@ -9,6 +9,10 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from src.agents.base_agent import AgentTool
 from src.agents.tools.embedding_tool import get_embedding_tool
+from src.agents.tools.topic_discovery_tool import (
+    get_topic_discovery_tool,
+    get_topic_title_tool,
+)
 from src.fetchers.arxiv_fetcher import ArxivFetcher, Paper
 
 logger = logging.getLogger(__name__)
@@ -216,6 +220,8 @@ def get_base_tools() -> List[AgentTool]:
             required_parameters=["papers", "topic"],
         ),
         get_embedding_tool(),
+        get_topic_discovery_tool(),
+        get_topic_title_tool(),
     ]
 
 

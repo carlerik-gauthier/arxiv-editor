@@ -247,3 +247,5 @@ Thumbs.db
 
 # notebooks
 *.ipynb
+
+.codex

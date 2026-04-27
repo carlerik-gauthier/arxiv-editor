@@ -68,6 +68,14 @@ class Settings(BaseSettings):
         default="all-MiniLM-L6-v2",
         description="Sentence transformer model for embeddings",
     )
+    topic_representation_model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model used by BERTopic representation_model for topic labels",
+    )
+    use_openai_topic_representation: bool = Field(
+        default=True,
+        description="Use BERTopic's OpenAI representation_model for topic labels",
+    )
     # TODO: check Arxiv tags
     # Agent ArXiv Categories Configuration
     agent_categories: Dict[str, List[str]] = Field(
@@ -161,8 +169,12 @@ class Settings(BaseSettings):
         default="",
         description="API key for LLM provider",
     )
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API key used for topic representation and OpenAI LLM calls",
+    )
     llm_model: str = Field(
-        default="claude-3-5-sonnet-20241022",
+        default="gpt-4o-mini",
         description="LLM model to use",
     )
 
