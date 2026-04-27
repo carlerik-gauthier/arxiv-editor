@@ -148,7 +148,12 @@ arxiv-editor/
 - ✅ Step 2.2: Multi-category fetching with minimum threshold
 - ✅ Step 2.3: PDF retrieval (`download_paper_pdf`, `extract_text_from_pdf`, `download_and_extract_paper`)
 
-**Phase 3-10**: See CONTEXT.md for full implementation plan
+**Phase 3: AI Agent Architecture with Tools and Hand-offs**
+- ✅ Step 3.1: Base Agent Class and Tool System
+- ✅ Step 3.2: Specialized Agent Implementations with Custom System Prompts
+- Step 3.3: Julius Coordinator Agent with Hand-offs
+
+**Phase 4-10**: See CONTEXT.md for full implementation plan
 
 ## Testing
 
@@ -161,6 +166,23 @@ With coverage:
 ```bash
 pytest --cov=src tests/
 ```
+
+## Specialized Agents
+
+Step 3.2 adds concrete specialist classes in `src/agents/specialized_agents.py`.
+Each class documents its domain profile, ArXiv category assignments, system
+prompt behavior, and tool access. Import agents directly or use the factory:
+
+```python
+from src.agents import MichelAgent, create_specialized_agent
+
+michel = MichelAgent()
+jean_baptiste = create_specialized_agent("Jean Baptiste")
+```
+
+Michel also has `create_metaphor_tool`, a documented deterministic tool for
+creating intuitive explanations that can later be replaced by an LLM-backed
+implementation without changing its output contract.
 
 ## License
 

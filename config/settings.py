@@ -22,12 +22,12 @@ class Settings(BaseSettings):
     )
 
     # Email Configuration
-    # smtp_host: str = Field(default="smtp.gmail.com", description="SMTP server host")
-    # smtp_port: int = Field(default=587, description="SMTP server port")
-    # smtp_username: str = Field(default="", description="SMTP username")
-    # smtp_password: str = Field(default="", description="SMTP password")
-    # smtp_use_tls: bool = Field(default=True, description="Use TLS for SMTP")
-    # from_email: str = Field(default="", description="From email address")
+    smtp_host: str = Field(default="smtp.gmail.com", description="SMTP server host")
+    smtp_port: int = Field(default=587, description="SMTP server port")
+    smtp_username: str = Field(default="", description="SMTP username")
+    smtp_password: str = Field(default="", description="SMTP password")
+    smtp_use_tls: bool = Field(default=True, description="Use TLS for SMTP")
+    from_email: str = Field(default="", description="From email address")
 
     # ArXiv Configuration
     min_papers_threshold: int = Field(
@@ -79,6 +79,7 @@ class Settings(BaseSettings):
             "elisa": ["cs.CR", "math.OC"],  # Cryptography, Optimization and Control
             "felix": ["math.DS", "math.SG"],  # Dynamical Systems, Symplectic Geometry
             "abdoulaye": ["cs.LG", "stat.ML"],  # Machine Learning, Machine Learning (stats)
+            "jeanbaptiste": ["cs.CL", "cs.AI", "cs.MA", "cs.CE"],  # NLP, AI, Multiagent Systems, Computational Engineering
         },
         description="ArXiv categories for each specialized agent",
     )
