@@ -151,7 +151,7 @@ arxiv-editor/
 **Phase 3: AI Agent Architecture with Tools and Hand-offs**
 - ✅ Step 3.1: Base Agent Class and Tool System
 - ✅ Step 3.2: Specialized Agent Implementations with Custom System Prompts
-- Step 3.3: Julius Coordinator Agent with Hand-offs
+- ✅ Step 3.3: Julius Coordinator Agent with Hand-offs
 
 **Phase 4-10**: See CONTEXT.md for full implementation plan
 
@@ -183,6 +183,30 @@ jean_baptiste = create_specialized_agent("Jean Baptiste")
 Michel also has `create_metaphor_tool`, a documented deterministic tool for
 creating intuitive explanations that can later be replaced by an LLM-backed
 implementation without changing its output contract.
+
+## Julius Coordination
+
+Step 3.3 adds `JuliusAgent` in `src/agents/julius_agent.py`. Julius owns the
+editorial workflow state machine, specialist hand-offs, result collection, draft
+compilation, and optional email delivery.
+
+```python
+from src.agents import JuliusAgent
+
+julius = JuliusAgent()
+workflow = julius.run_delegated_workflow(
+    "Summarize this week's probability and machine learning research",
+    agent_names=["Chris", "Abdoulaye"],
+)
+
+print(workflow["workflow_state"])  # COMPLETE
+print(workflow["one_pager"]["content"])
+```
+
+The coordination tools are also available through the normal agent tool system:
+`delegate_to_agent_tool`, `request_agent_extension_tool`,
+`collect_agent_results_tool`, `compile_one_pager_tool`, and `send_email_tool`.
+Email sending is side-effect free unless an `email_sender` callable is injected.
 
 ## License
 
