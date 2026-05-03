@@ -9,7 +9,7 @@ sentence-transformers==5.4.1
 
 # Data Validation
 pydantic==2.5.0
-pydantic-settings==2.1.0
+/mpydantic-settings==2.1.0
 
 # Environment Management
 python-dotenv==1.0.0

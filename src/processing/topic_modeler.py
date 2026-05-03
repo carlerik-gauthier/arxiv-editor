@@ -99,6 +99,7 @@ class TopicModeler:
         self._last_probabilities: Any = None
         self._last_records: List[PaperTopicRecord] = []
         self._last_topic_results: Dict[int, Dict[str, Any]] = {}
+        self._last_grouped_records: Dict[int, List[Dict[str, Any]]] = {}
 
     def extract_topics(
         self,
@@ -163,6 +164,9 @@ class TopicModeler:
                     "topic_probability": probability,
                 }
             )
+        self._last_grouped_records = {
+            topic_id: list(records) for topic_id, records in grouped_records.items()
+        }
 
         topic_results: List[Dict[str, Any]] = []
         for topic_id in sorted(topic_id for topic_id in grouped_records if topic_id != -1):
@@ -218,6 +222,199 @@ class TopicModeler:
             topic_info.get("representative_papers", []),
         )
         return topic_info
+
+    def select_representative_papers(
+        self,
+        topic_id: int,
+        papers: Iterable[Any],
+        n: int = DEFAULT_REPRESENTATIVE_PAPERS,
+        diversity_threshold: float = 0.7,
+        batch_size: int = 32,
+    ) -> Dict[str, Any]:
+        """
+        Select representative papers for a topic using confidence, centrality, and diversity.
+
+        The method prefers papers assigned to `topic_id` by the latest BERTopic
+        run, but it also accepts already-filtered paper dictionaries with
+        `topic_id`/`topic_probability` fields. Papers are first scored by topic
+        probability plus distance to the topic centroid, then greedily selected
+        while avoiding near-duplicates above `diversity_threshold`.
+        """
+        if n < 1:
+            raise ValueError("n must be at least 1")
+        if not 0.0 <= diversity_threshold <= 1.0:
+            raise ValueError("diversity_threshold must be between 0 and 1")
+
+        candidates = self._selection_candidates(topic_id, papers)
+        if not candidates:
+            raise ValueError(f"No papers are available for topic {topic_id}")
+
+        embedding_result = self.embedder.embed_texts(
+            [candidate["text"] for candidate in candidates],
+            batch_size=batch_size,
+        )
+        embeddings = embedding_result["embeddings"]
+        centroid = _centroid(embeddings)
+
+        scored_candidates: List[Dict[str, Any]] = []
+        for candidate, embedding in zip(candidates, embeddings):
+            topic_probability = candidate.get("topic_probability")
+            probability_score = _score_probability(topic_probability)
+            centrality_score = _bounded_cosine_similarity(embedding, centroid)
+            if topic_probability is None:
+                representativeness_score = centrality_score
+            else:
+                representativeness_score = (0.65 * probability_score) + (
+                    0.35 * centrality_score
+                )
+            scored_candidates.append(
+                {
+                    **candidate,
+                    "embedding": embedding,
+                    "topic_probability": topic_probability,
+                    "probability_score": probability_score,
+                    "centrality_score": centrality_score,
+                    "representativeness_score": representativeness_score,
+                }
+            )
+
+        ranked_candidates = sorted(
+            scored_candidates,
+            key=lambda paper: (
+                paper["representativeness_score"],
+                paper.get("title", ""),
+            ),
+            reverse=True,
+        )
+        selected = _diverse_paper_selection(
+            ranked_candidates,
+            limit=min(n, len(ranked_candidates)),
+            diversity_threshold=diversity_threshold,
+        )
+
+        selected_papers = []
+        for rank, paper in enumerate(selected, start=1):
+            selected_papers.append(_selection_result_paper(paper, rank))
+
+        return {
+            "topic_id": topic_id,
+            "selected_papers": selected_papers,
+            "paper_count": len(selected_papers),
+            "candidate_count": len(candidates),
+            "requested_count": n,
+            "diversity_threshold": diversity_threshold,
+            "embedding": {
+                "dimension": embedding_result["dimension"],
+                "cache_hits": embedding_result["cache_hits"],
+                "cache_misses": embedding_result["cache_misses"],
+                "cache_path": embedding_result["cache_path"],
+            },
+        }
+
+    def rank_papers_by_relevance(
+        self,
+        papers: Iterable[Any],
+        query: str,
+        n: Optional[int] = None,
+        batch_size: int = 32,
+    ) -> Dict[str, Any]:
+        """Rank papers by semantic similarity between a query and title/abstract text."""
+        if not query or not query.strip():
+            raise ValueError("query cannot be empty")
+        if n is not None and n < 1:
+            raise ValueError("n must be at least 1 when provided")
+
+        candidates = _paper_candidates(papers)
+        if not candidates:
+            raise ValueError("papers must contain at least one paper with a title or summary")
+
+        texts = [query, *[candidate["text"] for candidate in candidates]]
+        embedding_result = self.embedder.embed_texts(texts, batch_size=batch_size)
+        embeddings = embedding_result["embeddings"]
+        query_embedding = embeddings[0]
+        paper_embeddings = embeddings[1:]
+
+        ranked = []
+        for candidate, embedding in zip(candidates, paper_embeddings):
+            ranked.append(
+                {
+                    **candidate,
+                    "relevance_score": _bounded_cosine_similarity(
+                        query_embedding,
+                        embedding,
+                    ),
+                }
+            )
+        ranked.sort(
+            key=lambda paper: (paper["relevance_score"], paper.get("title", "")),
+            reverse=True,
+        )
+
+        limit = n or len(ranked)
+        ranked_papers = [
+            _relevance_result_paper(paper, rank)
+            for rank, paper in enumerate(ranked[:limit], start=1)
+        ]
+        return {
+            "query": " ".join(query.split()),
+            "ranked_papers": ranked_papers,
+            "paper_count": len(ranked_papers),
+            "candidate_count": len(candidates),
+            "embedding": {
+                "dimension": embedding_result["dimension"],
+                "cache_hits": embedding_result["cache_hits"],
+                "cache_misses": embedding_result["cache_misses"],
+                "cache_path": embedding_result["cache_path"],
+            },
+        }
+
+    def _selection_candidates(
+        self,
+        topic_id: int,
+        papers: Iterable[Any],
+    ) -> List[Dict[str, Any]]:
+        """Normalize and filter paper candidates for representative selection."""
+        provided_candidates = _paper_candidates(papers)
+        if not provided_candidates:
+            return []
+
+        topic_filtered = [
+            candidate
+            for candidate in provided_candidates
+            if candidate.get("topic_id") is not None
+            and int(candidate["topic_id"]) == int(topic_id)
+        ]
+        if topic_filtered:
+            return topic_filtered
+
+        modeled_topic_records = self._last_grouped_records.get(int(topic_id), [])
+        if not modeled_topic_records:
+            return provided_candidates
+
+        modeled_by_id = {
+            str(record.get("arxiv_id")): record for record in modeled_topic_records
+        }
+        modeled_by_index = {
+            int(record["index"]): record
+            for record in modeled_topic_records
+            if record.get("index") is not None
+        }
+
+        matched_candidates: List[Dict[str, Any]] = []
+        for candidate in provided_candidates:
+            modeled_record = modeled_by_id.get(str(candidate.get("arxiv_id")))
+            if modeled_record is None and candidate.get("index") is not None:
+                modeled_record = modeled_by_index.get(int(candidate["index"]))
+            if modeled_record is None:
+                continue
+            matched_candidates.append(
+                {
+                    **candidate,
+                    "topic_id": topic_id,
+                    "topic_probability": modeled_record.get("topic_probability"),
+                }
+            )
+        return matched_candidates or provided_candidates
 
     def _get_topic_model(self, min_topic_size: int, num_topics: Optional[int]) -> Any:
         """Return an injected or lazily initialized BERTopic model."""
@@ -509,6 +706,202 @@ def _select_representative_papers(
         }
         for paper in ranked[:limit]
     ]
+
+
+def _paper_candidates(papers: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Normalize paper-like inputs while preserving topic selection metadata."""
+    candidates: List[Dict[str, Any]] = []
+    for fallback_index, paper in enumerate(papers):
+        paper_dict = _paper_to_dict(paper)
+        title = str(paper_dict.get("title") or "Untitled paper").strip()
+        summary = str(
+            paper_dict.get("summary")
+            or paper_dict.get("abstract")
+            or paper_dict.get("description")
+            or ""
+        ).strip()
+        text = " ".join(part for part in [title, summary] if part).strip()
+        if not text:
+            continue
+
+        candidates.append(
+            {
+                "index": paper_dict.get("index", fallback_index),
+                "arxiv_id": str(
+                    paper_dict.get("arxiv_id")
+                    or paper_dict.get("id")
+                    or paper_dict.get("entry_id")
+                    or fallback_index
+                ),
+                "title": title,
+                "summary": summary,
+                "authors": [str(author) for author in paper_dict.get("authors", [])],
+                "categories": [
+                    str(category) for category in paper_dict.get("categories", [])
+                ],
+                "published": (
+                    str(paper_dict.get("published")) if paper_dict.get("published") else None
+                ),
+                "topic_id": paper_dict.get("topic_id"),
+                "topic_probability": paper_dict.get("topic_probability"),
+                "text": text,
+            }
+        )
+    return candidates
+
+
+def _centroid(embeddings: Sequence[Sequence[float]]) -> List[float]:
+    """Return the arithmetic centroid for a non-empty embedding matrix."""
+    if not embeddings:
+        return []
+    dimension = len(embeddings[0])
+    if dimension == 0:
+        return []
+    totals = [0.0] * dimension
+    for embedding in embeddings:
+        for index, value in enumerate(embedding[:dimension]):
+            totals[index] += float(value)
+    return [total / len(embeddings) for total in totals]
+
+
+def _score_probability(probability: Any) -> float:
+    """Normalize topic probability-like values to a bounded score."""
+    if probability is None:
+        return 0.0
+    try:
+        value = float(probability)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(value):
+        return 0.0
+    return max(0.0, min(value, 1.0))
+
+
+def _bounded_cosine_similarity(
+    left: Sequence[float],
+    right: Sequence[float],
+) -> float:
+    """Return cosine similarity clipped to the [0, 1] scoring range."""
+    cosine = _cosine_similarity(left, right)
+    return max(0.0, min(cosine, 1.0))
+
+
+def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+    """Compute cosine similarity with zero-vector protection."""
+    dimension = min(len(left), len(right))
+    if dimension == 0:
+        return 0.0
+
+    dot_product = sum(float(left[index]) * float(right[index]) for index in range(dimension))
+    left_norm = math.sqrt(sum(float(left[index]) ** 2 for index in range(dimension)))
+    right_norm = math.sqrt(sum(float(right[index]) ** 2 for index in range(dimension)))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot_product / (left_norm * right_norm)
+
+
+def _diverse_paper_selection(
+    ranked_candidates: Sequence[Dict[str, Any]],
+    limit: int,
+    diversity_threshold: float,
+) -> List[Dict[str, Any]]:
+    """Greedily choose high-scoring papers while suppressing near-duplicates."""
+    selected: List[Dict[str, Any]] = []
+    deferred: List[Dict[str, Any]] = []
+
+    for candidate in ranked_candidates:
+        max_similarity = _max_similarity_to_selected(candidate, selected)
+        diversity_score = 1.0 - max_similarity
+        candidate["max_similarity_to_selected"] = max_similarity
+        candidate["diversity_score"] = diversity_score
+        candidate["combined_score"] = _combined_selection_score(candidate)
+
+        if max_similarity <= diversity_threshold or not selected:
+            selected.append(candidate)
+            if len(selected) == limit:
+                return selected
+        else:
+            deferred.append(candidate)
+
+    for candidate in deferred:
+        if len(selected) == limit:
+            break
+        candidate["combined_score"] = _combined_selection_score(candidate)
+        selected.append(candidate)
+
+    selected.sort(key=lambda paper: paper["combined_score"], reverse=True)
+    return selected[:limit]
+
+
+def _max_similarity_to_selected(
+    candidate: Dict[str, Any],
+    selected: Sequence[Dict[str, Any]],
+) -> float:
+    """Return the highest bounded cosine similarity to already selected papers."""
+    if not selected:
+        return 0.0
+    similarities = [
+        _bounded_cosine_similarity(candidate["embedding"], paper["embedding"])
+        for paper in selected
+    ]
+    return max(similarities)
+
+
+def _combined_selection_score(paper: Dict[str, Any]) -> float:
+    """Blend representativeness and diversity into one sortable score."""
+    return (0.8 * paper["representativeness_score"]) + (
+        0.2 * paper.get("diversity_score", 1.0)
+    )
+
+
+def _selection_result_paper(paper: Dict[str, Any], rank: int) -> Dict[str, Any]:
+    """Convert an internal selection candidate into tool-facing metadata."""
+    return {
+        "rank": rank,
+        "arxiv_id": paper["arxiv_id"],
+        "title": paper["title"],
+        "summary": paper["summary"],
+        "authors": paper["authors"],
+        "categories": paper["categories"],
+        "published": paper.get("published"),
+        "topic_id": paper.get("topic_id"),
+        "topic_probability": paper.get("topic_probability"),
+        "scores": {
+            "topic_probability": paper["probability_score"],
+            "centrality": paper["centrality_score"],
+            "diversity": paper.get("diversity_score", 1.0),
+            "representativeness": paper["representativeness_score"],
+            "combined": paper["combined_score"],
+            "max_similarity_to_selected": paper.get("max_similarity_to_selected", 0.0),
+        },
+        "justification": _selection_justification(paper),
+    }
+
+
+def _selection_justification(paper: Dict[str, Any]) -> str:
+    """Create a compact deterministic explanation for a selected paper."""
+    return (
+        "Selected for high topic fit "
+        f"({paper['representativeness_score']:.3f}) and diversity "
+        f"({paper.get('diversity_score', 1.0):.3f}) relative to other candidates."
+    )
+
+
+def _relevance_result_paper(paper: Dict[str, Any], rank: int) -> Dict[str, Any]:
+    """Convert a relevance candidate into tool-facing metadata."""
+    return {
+        "rank": rank,
+        "arxiv_id": paper["arxiv_id"],
+        "title": paper["title"],
+        "summary": paper["summary"],
+        "authors": paper["authors"],
+        "categories": paper["categories"],
+        "published": paper.get("published"),
+        "relevance_score": paper["relevance_score"],
+        "justification": (
+            "Ranked by semantic similarity between the query and the paper title/abstract."
+        ),
+    }
 
 
 def _keywords_from_papers(papers: Sequence[Dict[str, Any]], limit: int) -> List[str]:

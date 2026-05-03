@@ -156,7 +156,12 @@ arxiv-editor/
 **Phase 4: Text Processing & Topic Modeling**
 - ✅ Step 4.1: Text Embedding Tool
 - ✅ Step 4.2: Topic Discovery Tool with BERTopic
-- Step 4.3: Representative Paper Selection Tool
+- ✅ Step 4.3: Representative Paper Selection Tool
+
+**Phase 5: AI-Powered Paper Analysis Tools**
+- Step 5.1: Problem Statement Extraction Tool
+- Step 5.2: Key Results Extraction Tool
+- Step 5.3: Impact Assessment Tool
 
 **Phase 5-10**: See CONTEXT.md for full implementation plan
 
