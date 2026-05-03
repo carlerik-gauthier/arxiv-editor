@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from src.agents.base_agent import AgentTool
 from src.agents.tools.embedding_tool import get_embedding_tool
+from src.agents.tools.impact_assessment_tool import get_impact_assessment_tool
 from src.agents.tools.paper_selection_tool import (
     get_paper_relevance_tool,
     get_paper_selection_tool,
@@ -232,6 +233,7 @@ def get_base_tools() -> List[AgentTool]:
         get_paper_relevance_tool(),
         get_problem_extraction_tool(),
         get_results_extraction_tool(),
+        get_impact_assessment_tool(),
     ]
 
 
