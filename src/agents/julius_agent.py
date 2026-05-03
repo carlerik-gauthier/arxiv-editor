@@ -9,7 +9,8 @@ from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Optional
 from uuid import uuid4
 
-from src.agents.base_agent import AgentTool, BaseAgent
+from src.agents import openai_tracing
+from src.agents.base_agent import AgentTool, BaseAgent, ToolExecutionError
 from src.agents.specialized_agents import (
     SpecializedAgent,
     create_all_specialized_agents,
@@ -104,23 +105,45 @@ class AgentHandoff:
         handoff.started_at = datetime.now(timezone.utc)
         handoff.status = AgentTaskStatus.IN_PROGRESS
 
-        try:
-            response = to_agent.respond(
-                _format_handoff_prompt(from_agent.name, context),
-                auto_execute_tools=False,
-            )
-            handoff.result = {
-                "agent": to_agent.name,
-                "categories": list(getattr(to_agent, "categories", [])),
-                "response": response,
-                "handoff_context": context.to_dict(),
-            }
-            handoff.status = AgentTaskStatus.COMPLETED
-        except Exception as exc:
-            handoff.error = str(exc)
-            handoff.status = AgentTaskStatus.FAILED
-        finally:
-            handoff.completed_at = datetime.now(timezone.utc)
+        with openai_tracing.trace_handoff(from_agent.name, to_agent.name) as trace_span:
+            with openai_tracing.trace_custom(
+                "handoff.context",
+                {
+                    "handoff_id": handoff.handoff_id,
+                    "from_agent": from_agent.name,
+                    "to_agent": to_agent.name,
+                    "context": context.to_dict(),
+                },
+            ):
+                pass
+
+            try:
+                response = to_agent.respond(
+                    _format_handoff_prompt(from_agent.name, context),
+                    auto_execute_tools=False,
+                )
+                handoff.result = {
+                    "agent": to_agent.name,
+                    "categories": list(getattr(to_agent, "categories", [])),
+                    "response": response,
+                    "handoff_context": context.to_dict(),
+                }
+                handoff.status = AgentTaskStatus.COMPLETED
+                openai_tracing.set_span_output(trace_span, handoff.result)
+            except Exception as exc:
+                handoff.error = str(exc)
+                handoff.status = AgentTaskStatus.FAILED
+                openai_tracing.set_span_error(
+                    trace_span,
+                    exc,
+                    {
+                        "handoff_id": handoff.handoff_id,
+                        "from_agent": from_agent.name,
+                        "to_agent": to_agent.name,
+                    },
+                )
+            finally:
+                handoff.completed_at = datetime.now(timezone.utc)
 
         return handoff
 
@@ -316,44 +339,60 @@ class JuliusAgent(BaseAgent):
         experiments. Future phases can swap the internals for asynchronous task
         execution while preserving the state and output contracts.
         """
-        self._transition_to(WorkflowState.PLANNING)
-        parsed_request = self.parse_user_request(
-            user_request=user_request,
-            date_range=date_range,
-            topics=topics,
-            preferences=preferences,
-        )
-        plan = self.create_execution_plan(parsed_request, agent_names=agent_names)
-
-        self._transition_to(WorkflowState.DELEGATING)
-        for assignment in plan["assignments"]:
-            self.delegate_to_agent_tool(**assignment)
-
-        self._transition_to(WorkflowState.COLLECTING)
-        agent_results = self.collect_agent_results_tool(
-            [assignment["agent_name"] for assignment in plan["assignments"]]
-        )
-
-        self._transition_to(WorkflowState.COMPILING)
-        one_pager = self.compile_one_pager_tool(agent_results)
-
-        self._transition_to(WorkflowState.REVIEWING)
-        review = {
-            "status": "ready_for_delivery",
-            "completed_agents": agent_results["completed_count"],
-            "failed_agents": agent_results["failed_count"],
+        trace_metadata = {
+            "trace_agent": self.name,
+            "requested_agents": list(agent_names) if agent_names is not None else "all",
+            "user_request": user_request,
+            "date_range": date_range or {},
+            "topics": topics or [],
+            "preferences": preferences or {},
         }
+        with openai_tracing.trace_workflow(
+            "ArXiv Editor delegated workflow",
+            metadata=trace_metadata,
+        ):
+            self._transition_to(WorkflowState.PLANNING)
+            parsed_request = self.parse_user_request(
+                user_request=user_request,
+                date_range=date_range,
+                topics=topics,
+                preferences=preferences,
+            )
+            plan = self.create_execution_plan(parsed_request, agent_names=agent_names)
 
-        self._transition_to(WorkflowState.COMPLETE)
-        return {
-            "request": parsed_request,
-            "plan": plan,
-            "agent_results": agent_results,
-            "one_pager": one_pager,
-            "review": review,
-            "workflow_state": self.workflow_state.value,
-            "state_history": list(self.state_history),
-        }
+            self._transition_to(WorkflowState.DELEGATING)
+            for assignment in plan["assignments"]:
+                self._execute_coordination_tool("delegate_to_agent_tool", assignment)
+
+            self._transition_to(WorkflowState.COLLECTING)
+            agent_results = self._execute_coordination_tool(
+                "collect_agent_results_tool",
+                {"agent_names": [assignment["agent_name"] for assignment in plan["assignments"]]},
+            )
+
+            self._transition_to(WorkflowState.COMPILING)
+            one_pager = self._execute_coordination_tool(
+                "compile_one_pager_tool",
+                {"agent_results": agent_results},
+            )
+
+            self._transition_to(WorkflowState.REVIEWING)
+            review = {
+                "status": "ready_for_delivery",
+                "completed_agents": agent_results["completed_count"],
+                "failed_agents": agent_results["failed_count"],
+            }
+
+            self._transition_to(WorkflowState.COMPLETE)
+            return {
+                "request": parsed_request,
+                "plan": plan,
+                "agent_results": agent_results,
+                "one_pager": one_pager,
+                "review": review,
+                "workflow_state": self.workflow_state.value,
+                "state_history": list(self.state_history),
+            }
 
     def delegate_to_agent_tool(
         self,
@@ -537,6 +576,18 @@ class JuliusAgent(BaseAgent):
         """Move Julius to the next workflow state and record the transition."""
         self.workflow_state = next_state
         self._record_state(next_state)
+        with openai_tracing.trace_custom(
+            "workflow.state",
+            {"agent": self.name, "state": next_state.value},
+        ):
+            pass
+
+    def _execute_coordination_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Any:
+        """Execute a Julius coordination tool and preserve direct-call failure semantics."""
+        tool_result = self.execute_tool(tool_name, parameters)
+        if not tool_result.success:
+            raise ToolExecutionError(tool_result.error or f"{tool_name} failed")
+        return tool_result.result
 
     def _record_state(self, state: WorkflowState) -> None:
         """Append a workflow state transition to Julius's state history."""

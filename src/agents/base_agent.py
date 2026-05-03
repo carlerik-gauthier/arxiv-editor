@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from src.agents import openai_tracing
+
 logger = logging.getLogger(__name__)
 
 
@@ -180,26 +182,36 @@ class BaseAgent:
         started_at = datetime.now(timezone.utc)
         result = ToolResult(tool_name=tool_name, success=False, started_at=started_at)
 
-        try:
-            tool = self.tools.get(tool_name)
-            if tool is None:
-                raise ToolExecutionError(f"Tool '{tool_name}' is not available to {self.name}")
+        with openai_tracing.trace_tool_call(
+            tool_name,
+            {"agent": self.name, "parameters": parameters or {}},
+        ) as trace_span:
+            try:
+                tool = self.tools.get(tool_name)
+                if tool is None:
+                    raise ToolExecutionError(f"Tool '{tool_name}' is not available to {self.name}")
 
-            logger.info("Agent '%s' executing tool '%s'", self.name, tool_name)
-            result.result = tool.execute(parameters)
-            result.success = True
-            return result
+                logger.info("Agent '%s' executing tool '%s'", self.name, tool_name)
+                result.result = tool.execute(parameters)
+                result.success = True
+                openai_tracing.set_span_output(trace_span, result.result)
 
-        except Exception as exc:
-            result.error = str(exc)
-            self.state["last_error"] = result.error
-            logger.exception("Agent '%s' failed executing tool '%s'", self.name, tool_name)
-            return result
+            except Exception as exc:
+                result.error = str(exc)
+                self.state["last_error"] = result.error
+                openai_tracing.set_span_error(
+                    trace_span,
+                    exc,
+                    {"agent": self.name, "tool_name": tool_name},
+                )
+                logger.exception("Agent '%s' failed executing tool '%s'", self.name, tool_name)
 
-        finally:
-            result.completed_at = datetime.now(timezone.utc)
-            self.state["tool_calls"].append(result.to_dict())
-            self._add_message("tool", result.to_dict())
+            finally:
+                result.completed_at = datetime.now(timezone.utc)
+                self.state["tool_calls"].append(result.to_dict())
+                self._add_message("tool", result.to_dict())
+
+        return result
 
     def execute_tool_calls(self, tool_calls: Iterable[ToolCall]) -> List[ToolResult]:
         """Execute multiple tool calls in order."""
@@ -216,22 +228,37 @@ class BaseAgent:
         The response format is intentionally simple so later specialized agents
         can build richer workflows without changing the base contract.
         """
-        self._add_message("user", user_message)
-        llm_response = self._call_llm(user_message)
-        self.state["last_response"] = llm_response
-        self._add_message("assistant", llm_response)
-
-        tool_calls = self.parse_tool_calls(llm_response)
-        tool_results: List[ToolResult] = []
-        if auto_execute_tools and tool_calls:
-            tool_results = self.execute_tool_calls(tool_calls)
-
-        return {
-            "agent": self.name,
-            "response": llm_response,
-            "tool_calls": tool_calls,
-            "tool_results": tool_results,
+        workflow_metadata = {
+            "trace_agent": self.name,
+            "auto_execute_tools": auto_execute_tools,
+            "user_message": user_message,
         }
+        with openai_tracing.trace_workflow(
+            f"{self.name} agent response",
+            metadata=workflow_metadata,
+        ):
+            with openai_tracing.trace_agent(
+                self.name,
+                tools=self.list_tools(),
+            ) as trace_span:
+                self._add_message("user", user_message)
+                llm_response = self._call_llm(user_message)
+                self.state["last_response"] = llm_response
+                self._add_message("assistant", llm_response)
+
+                tool_calls = self.parse_tool_calls(llm_response)
+                tool_results: List[ToolResult] = []
+                if auto_execute_tools and tool_calls:
+                    tool_results = self.execute_tool_calls(tool_calls)
+
+                response_payload = {
+                    "agent": self.name,
+                    "response": llm_response,
+                    "tool_calls": tool_calls,
+                    "tool_results": tool_results,
+                }
+                openai_tracing.set_span_output(trace_span, response_payload)
+                return response_payload
 
     def _call_llm(self, user_message: str) -> Any:
         """
@@ -240,35 +267,45 @@ class BaseAgent:
         If no client is configured, the agent returns a deterministic response.
         This keeps unit tests and early project phases independent from paid APIs.
         """
-        if self.llm_client is None:
-            return (
-                f"{self.name} received the task and is ready to use tools. "
-                f"Available tools: {', '.join(self.list_tools()) or 'none'}."
-            )
-
         messages = self.conversation_history
         tool_schemas = self.get_tool_schemas()
 
-        if callable(self.llm_client):
-            return self.llm_client(
-                messages=messages,
-                system_prompt=self.system_prompt,
-                tools=tool_schemas,
-            )
+        with openai_tracing.trace_generation(
+            messages=messages,
+            model=_infer_llm_model_name(self.llm_client),
+        ) as trace_span:
+            if self.llm_client is None:
+                response = (
+                    f"{self.name} received the task and is ready to use tools. "
+                    f"Available tools: {', '.join(self.list_tools()) or 'none'}."
+                )
+                openai_tracing.set_span_output(trace_span, response)
+                return response
 
-        for method_name in ("complete", "generate", "chat", "invoke"):
-            if method_name not in dir(self.llm_client):
-                continue
-            method = getattr(self.llm_client, method_name, None)
-            if callable(method):
-                try:
-                    return method(
-                        messages=messages,
-                        system_prompt=self.system_prompt,
-                        tools=tool_schemas,
-                    )
-                except TypeError:
-                    return method(user_message)
+            if callable(self.llm_client):
+                response = self.llm_client(
+                    messages=messages,
+                    system_prompt=self.system_prompt,
+                    tools=tool_schemas,
+                )
+                openai_tracing.set_span_output(trace_span, response)
+                return response
+
+            for method_name in ("complete", "generate", "chat", "invoke"):
+                if method_name not in dir(self.llm_client):
+                    continue
+                method = getattr(self.llm_client, method_name, None)
+                if callable(method):
+                    try:
+                        response = method(
+                            messages=messages,
+                            system_prompt=self.system_prompt,
+                            tools=tool_schemas,
+                        )
+                    except TypeError:
+                        response = method(user_message)
+                    openai_tracing.set_span_output(trace_span, response)
+                    return response
 
         raise TypeError("llm_client must be callable or expose complete/generate/chat/invoke")
 
@@ -392,3 +429,16 @@ class BaseAgent:
                 continue
 
         return payloads
+
+
+def _infer_llm_model_name(llm_client: Any) -> Optional[str]:
+    """Best-effort model name extraction for tracing injected clients."""
+    if llm_client is None:
+        return "deterministic"
+
+    for attribute_name in ("model", "model_name", "deployment", "engine"):
+        value = getattr(llm_client, attribute_name, None)
+        if value:
+            return str(value)
+
+    return type(llm_client).__name__

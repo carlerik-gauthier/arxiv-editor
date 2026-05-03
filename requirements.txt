@@ -8,8 +8,8 @@ bertopic==0.16.0
 sentence-transformers==5.4.1
 
 # Data Validation
-pydantic==2.5.0
-/mpydantic-settings==2.1.0
+pydantic==2.13.3
+pydantic-settings==2.14.0
 
 # Environment Management
 python-dotenv==1.0.0
@@ -22,6 +22,7 @@ pytest-asyncio==0.21.1
 # HTTP Requests
 requests==2.31.0
 openai==2.32.0
+openai-agents>=0.14.0
 
 # PDF Processing
 pypdf==3.17.0
