@@ -98,6 +98,110 @@ class PaperAnalyzer:
             chunks,
         )
 
+    def extract_key_results(
+        self,
+        paper_text: str,
+        paper_metadata: Optional[Dict[str, Any]] = None,
+        domain: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extract and rank the main findings or contributions from a paper.
+
+        Args:
+            paper_text: Full paper text or a substantial excerpt.
+            paper_metadata: Optional title/authors/categories/summary metadata.
+            domain: Optional domain hint such as `math`, `ml`, `crypto`, or
+                `general`. When omitted, the analyzer infers a coarse domain
+                from ArXiv categories and paper text.
+
+        Returns:
+            A structured dictionary with `results`, `result_count`, `domain`,
+            `confidence`, `source`, `sections_used`, and `chunks_analyzed`.
+            Each result includes `result_type`, `statement`, `significance`,
+            `location`, `evidence`, and `importance_score`.
+
+        Raises:
+            ValueError: If `paper_text` is empty.
+        """
+        normalized_text = _normalize_text(paper_text, parameter_name="paper_text")
+        metadata = dict(paper_metadata or {})
+        sections = self.extract_sections(normalized_text)
+        inferred_domain = _infer_domain(domain, metadata, normalized_text)
+        chunks = self.chunk_text(_results_analysis_text(sections, normalized_text))
+
+        if self.llm_client is not None:
+            try:
+                result = self._extract_key_results_with_llm(
+                    chunks=chunks,
+                    paper_metadata=metadata,
+                    sections=sections,
+                    domain=inferred_domain,
+                )
+                result.setdefault("source", "llm")
+                result.setdefault("confidence", "llm")
+                result.setdefault("domain", inferred_domain)
+                result.setdefault("sections_used", _non_empty_section_names(sections))
+                result.setdefault("chunks_analyzed", len(chunks))
+                return _normalize_key_results_result(
+                    result,
+                    domain=inferred_domain,
+                    sections=sections,
+                    chunks_analyzed=len(chunks),
+                )
+            except Exception as exc:
+                fallback = self._extract_key_results_heuristic(
+                    normalized_text,
+                    metadata,
+                    sections,
+                    chunks,
+                    inferred_domain,
+                )
+                fallback["source"] = "heuristic_fallback"
+                fallback["llm_error"] = str(exc)
+                return fallback
+
+        return self._extract_key_results_heuristic(
+            normalized_text,
+            metadata,
+            sections,
+            chunks,
+            inferred_domain,
+        )
+
+    def rank_results_by_importance(
+        self,
+        results: Iterable[Dict[str, Any]],
+        domain: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Rank extracted result dictionaries by estimated editorial importance.
+
+        Args:
+            results: Iterable of result dictionaries. Missing fields are filled
+                with conservative defaults.
+            domain: Optional domain hint used to weight theorem, empirical, or
+                security guarantees appropriately.
+
+        Returns:
+            Result dictionaries ordered by descending `importance_score`, with
+            stable `rank` fields assigned from 1.
+        """
+        normalized_results = [
+            _normalize_result_item(result, index, domain or "general")
+            for index, result in enumerate(results)
+        ]
+        ranked = sorted(
+            normalized_results,
+            key=lambda result: (
+                result["importance_score"],
+                result.get("statement", ""),
+            ),
+            reverse=True,
+        )
+        for rank, result in enumerate(ranked, start=1):
+            result["rank"] = rank
+        return ranked
+
     def extract_sections(self, paper_text: str) -> Dict[str, str]:
         """
         Identify common paper sections in normalized text.
@@ -184,6 +288,23 @@ class PaperAnalyzer:
         )
         response = _call_llm_client(self.llm_client, prompt)
         return _parse_llm_problem_response(response)
+
+    def _extract_key_results_with_llm(
+        self,
+        chunks: Sequence[str],
+        paper_metadata: Dict[str, Any],
+        sections: Dict[str, str],
+        domain: str,
+    ) -> Dict[str, Any]:
+        """Call the injected LLM client and parse key-result output."""
+        prompt = _build_key_results_prompt(
+            chunks=chunks[:4],
+            paper_metadata=paper_metadata,
+            sections=sections,
+            domain=domain,
+        )
+        response = _call_llm_client(self.llm_client, prompt)
+        return _parse_llm_key_results_response(response)
 
     def _extract_problem_statement_heuristic(
         self,
@@ -277,6 +398,55 @@ class PaperAnalyzer:
             len(chunks),
         )
 
+    def _extract_key_results_heuristic(
+        self,
+        paper_text: str,
+        paper_metadata: Dict[str, Any],
+        sections: Dict[str, str],
+        chunks: Sequence[str],
+        domain: str,
+    ) -> Dict[str, Any]:
+        """Extract key results with deterministic formal-statement and sentence rules."""
+        candidate_results = _extract_formal_result_candidates(paper_text, sections)
+        candidate_results.extend(
+            _extract_sentence_result_candidates(
+                paper_metadata=paper_metadata,
+                sections=sections,
+                paper_text=paper_text,
+                domain=domain,
+            )
+        )
+        deduped_results = _deduplicate_results(candidate_results)
+
+        if not deduped_results:
+            deduped_results = [
+                {
+                    "result_type": "summary",
+                    "statement": _metadata_problem_fallback(
+                        paper_metadata,
+                        _split_sentences(paper_text[:2000]),
+                    ),
+                    "significance": "This is the clearest contribution visible in the supplied text.",
+                    "location": "metadata_or_body",
+                    "evidence": [],
+                }
+            ]
+
+        ranked_results = self.rank_results_by_importance(deduped_results, domain=domain)
+        return _normalize_key_results_result(
+            {
+                "results": ranked_results,
+                "domain": domain,
+                "confidence": "heuristic",
+                "source": "heuristic",
+                "sections_used": _non_empty_section_names(sections),
+                "chunks_analyzed": len(chunks),
+            },
+            domain=domain,
+            sections=sections,
+            chunks_analyzed=len(chunks),
+        )
+
 
 def _normalize_text(text: str, parameter_name: str) -> str:
     """Validate text input and normalize whitespace."""
@@ -349,6 +519,21 @@ def _analysis_text(sections: Dict[str, str], paper_text: str) -> str:
     return text or paper_text[:DEFAULT_SECTION_SCAN_CHARS]
 
 
+def _results_analysis_text(sections: Dict[str, str], paper_text: str) -> str:
+    """Build the text slice most likely to contain results and contributions."""
+    preferred_sections = [
+        sections.get("abstract", ""),
+        sections.get("results", ""),
+        sections.get("experiments", ""),
+        sections.get("methods", ""),
+        sections.get("discussion", ""),
+        sections.get("conclusion", ""),
+        sections.get("introduction", ""),
+    ]
+    text = " ".join(section for section in preferred_sections if section).strip()
+    return text or paper_text[:DEFAULT_SECTION_SCAN_CHARS]
+
+
 def _build_problem_prompt(
     chunks: Sequence[str],
     paper_metadata: Dict[str, Any],
@@ -362,6 +547,33 @@ def _build_problem_prompt(
     return (
         "Extract the research problem from this paper. Return strict JSON with "
         "keys: problem, motivation, research_gap, context, evidence, confidence.\n"
+        f"Title: {title}\n"
+        f"Categories: {categories}\n"
+        f"Sections available: {section_names}\n\n"
+        f"{chunk_text}"
+    )
+
+
+def _build_key_results_prompt(
+    chunks: Sequence[str],
+    paper_metadata: Dict[str, Any],
+    sections: Dict[str, str],
+    domain: str,
+) -> str:
+    """Build a concise LLM prompt for domain-aware key result extraction."""
+    title = paper_metadata.get("title", "Untitled paper")
+    categories = ", ".join(str(category) for category in paper_metadata.get("categories", []))
+    section_names = ", ".join(_non_empty_section_names(sections))
+    chunk_text = "\n\n".join(f"Chunk {index + 1}: {chunk}" for index, chunk in enumerate(chunks))
+    return (
+        "Extract the key results from this paper. Return strict JSON with keys: "
+        "results, confidence. The results value must be a list of objects with "
+        "keys: result_type, statement, significance, location, evidence, "
+        "importance_score. For math papers, prioritize theorems and formal "
+        "guarantees. For ML papers, prioritize empirical findings, benchmarks, "
+        "architectures, ablations, and theoretical guarantees. For crypto papers, "
+        "prioritize security guarantees, attacks, protocols, and assumptions.\n"
+        f"Domain: {domain}\n"
         f"Title: {title}\n"
         f"Categories: {categories}\n"
         f"Sections available: {section_names}\n\n"
@@ -415,6 +627,30 @@ def _parse_llm_problem_response(response: Any) -> Dict[str, Any]:
     return parsed
 
 
+def _parse_llm_key_results_response(response: Any) -> Dict[str, Any]:
+    """Parse LLM key-result output into a dictionary with a results list."""
+    parsed = _parse_llm_problem_response(response)
+    if "results" in parsed:
+        return parsed
+    if "key_results" in parsed:
+        parsed["results"] = parsed.pop("key_results")
+        return parsed
+    if "statement" in parsed:
+        return {"results": [parsed], "confidence": parsed.get("confidence", "llm")}
+    return {
+        "results": [
+            {
+                "result_type": "llm_unstructured",
+                "statement": str(parsed.get("problem") or parsed),
+                "significance": "The LLM response did not provide structured result fields.",
+                "location": "llm_response",
+                "evidence": [],
+            }
+        ],
+        "confidence": parsed.get("confidence", "llm_unstructured"),
+    }
+
+
 def _normalize_problem_result(
     result: Dict[str, Any],
     paper_metadata: Dict[str, Any],
@@ -437,6 +673,336 @@ def _normalize_problem_result(
         "chunks_analyzed": int(result.get("chunks_analyzed") or chunks_analyzed),
         **({"llm_error": result["llm_error"]} if result.get("llm_error") else {}),
     }
+
+
+def _normalize_key_results_result(
+    result: Dict[str, Any],
+    domain: str,
+    sections: Dict[str, str],
+    chunks_analyzed: int,
+) -> Dict[str, Any]:
+    """Ensure key-result extraction output has stable keys and ranked results."""
+    raw_results = result.get("results", [])
+    if isinstance(raw_results, dict):
+        raw_results = [raw_results]
+    if isinstance(raw_results, str):
+        raw_results = [
+            {
+                "result_type": "summary",
+                "statement": raw_results,
+                "significance": "Unstructured result returned by analyzer.",
+                "location": "unknown",
+                "evidence": [],
+            }
+        ]
+
+    normalized_results = [
+        _normalize_result_item(item, index, str(result.get("domain") or domain))
+        for index, item in enumerate(raw_results or [])
+        if item
+    ]
+    ranked_results = sorted(
+        normalized_results,
+        key=lambda item: (item["importance_score"], item["statement"]),
+        reverse=True,
+    )
+    for rank, item in enumerate(ranked_results, start=1):
+        item["rank"] = rank
+
+    return {
+        "results": ranked_results,
+        "result_count": len(ranked_results),
+        "domain": str(result.get("domain") or domain),
+        "confidence": str(result.get("confidence") or "unknown"),
+        "source": str(result.get("source") or "unknown"),
+        "sections_used": list(result.get("sections_used") or _non_empty_section_names(sections)),
+        "chunks_analyzed": int(result.get("chunks_analyzed") or chunks_analyzed),
+        **({"llm_error": result["llm_error"]} if result.get("llm_error") else {}),
+    }
+
+
+def _normalize_result_item(
+    result: Dict[str, Any],
+    fallback_index: int,
+    domain: str,
+) -> Dict[str, Any]:
+    """Normalize one extracted result and assign an importance score."""
+    result_dict = dict(result)
+    statement = str(result_dict.get("statement") or result_dict.get("result") or "").strip()
+    if not statement:
+        statement = "No result statement was provided."
+    evidence = result_dict.get("evidence", [])
+    if isinstance(evidence, str):
+        evidence = [evidence]
+    result_type = str(result_dict.get("result_type") or "result")
+    importance_score = result_dict.get("importance_score")
+    if importance_score is None:
+        importance_score = _estimate_result_importance(result_type, statement, domain)
+
+    try:
+        score = float(importance_score)
+    except (TypeError, ValueError):
+        score = _estimate_result_importance(result_type, statement, domain)
+
+    return {
+        "rank": int(result_dict.get("rank") or fallback_index + 1),
+        "result_type": result_type,
+        "statement": statement,
+        "significance": str(
+            result_dict.get("significance")
+            or _default_result_significance(result_type, domain)
+        ),
+        "location": str(result_dict.get("location") or "unknown"),
+        "evidence": [str(item) for item in evidence if str(item).strip()],
+        "importance_score": max(0.0, min(score, 1.0)),
+    }
+
+
+def _infer_domain(
+    domain: Optional[str],
+    paper_metadata: Dict[str, Any],
+    paper_text: str,
+) -> str:
+    """Infer a coarse result-extraction domain from hint, categories, and text."""
+    if domain:
+        normalized = domain.lower().strip()
+        if normalized in {"machine_learning", "machine learning"}:
+            return "ml"
+        if normalized in {"cryptography", "security"}:
+            return "crypto"
+        if normalized in {"mathematics", "math"}:
+            return "math"
+        return normalized
+
+    categories = " ".join(str(category).lower() for category in paper_metadata.get("categories", []))
+    lowered_text = paper_text[:3000].lower()
+    if any(category in categories for category in ("cs.lg", "stat.ml", "cs.ai", "cs.cl")):
+        return "ml"
+    if any(category in categories for category in ("cs.cr", "crypto")):
+        return "crypto"
+    if "security proof" in lowered_text or "adversary" in lowered_text:
+        return "crypto"
+    if "benchmark" in lowered_text or "accuracy" in lowered_text or "dataset" in lowered_text:
+        return "ml"
+    if "theorem" in lowered_text or "lemma" in lowered_text or "proof" in lowered_text:
+        return "math"
+    return "general"
+
+
+def _extract_formal_result_candidates(
+    paper_text: str,
+    sections: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    """Extract theorem-like formal statements from the supplied paper text."""
+    candidates: List[Dict[str, Any]] = []
+    formal_pattern = re.compile(
+        r"\b(?P<kind>Theorem|Lemma|Proposition|Corollary)\s*"
+        r"(?P<number>\d+(?:\.\d+)*)?\s*(?:\([^)]*\))?\s*[:.]?\s+"
+        r"(?P<statement>[^.!?]{20,500}[.!?])",
+        flags=re.IGNORECASE,
+    )
+    for match in formal_pattern.finditer(paper_text[:DEFAULT_SECTION_SCAN_CHARS]):
+        kind = match.group("kind").lower()
+        statement = f"{match.group('kind')} {match.group('number') or ''} {match.group('statement')}"
+        statement = " ".join(statement.split())
+        candidates.append(
+            {
+                "result_type": kind,
+                "statement": statement,
+                "significance": _default_result_significance(kind, "math"),
+                "location": _find_statement_location(statement, sections),
+                "evidence": [statement],
+            }
+        )
+    return candidates
+
+
+def _extract_sentence_result_candidates(
+    paper_metadata: Dict[str, Any],
+    sections: Dict[str, str],
+    paper_text: str,
+    domain: str,
+) -> List[Dict[str, Any]]:
+    """Extract result-like sentences using domain-specific keyword patterns."""
+    candidate_text = _results_analysis_text(sections, paper_text)
+    if paper_metadata.get("summary"):
+        candidate_text = f"{paper_metadata['summary']} {candidate_text}"
+
+    sentences = _split_sentences(candidate_text)
+    keywords = _domain_result_keywords(domain)
+    candidates: List[Dict[str, Any]] = []
+    for sentence in sentences:
+        lowered = sentence.lower()
+        if not any(keyword in lowered for keyword in keywords):
+            continue
+        result_type = _classify_result_type(sentence, domain)
+        candidates.append(
+            {
+                "result_type": result_type,
+                "statement": sentence,
+                "significance": _default_result_significance(result_type, domain),
+                "location": _find_statement_location(sentence, sections),
+                "evidence": [sentence],
+            }
+        )
+    return candidates
+
+
+def _domain_result_keywords(domain: str) -> Sequence[str]:
+    """Return keywords that indicate result sentences for a coarse domain."""
+    common = (
+        "we prove",
+        "we show",
+        "we establish",
+        "we introduce",
+        "we present",
+        "we propose",
+        "we demonstrate",
+        "our results",
+        "main result",
+        "result",
+    )
+    if domain == "ml":
+        return common + (
+            "outperform",
+            "state-of-the-art",
+            "accuracy",
+            "benchmark",
+            "ablation",
+            "dataset",
+            "improves",
+        )
+    if domain == "crypto":
+        return common + (
+            "secure",
+            "security",
+            "adversary",
+            "attack",
+            "protocol",
+            "proof",
+            "guarantee",
+        )
+    if domain == "math":
+        return common + (
+            "theorem",
+            "lemma",
+            "proposition",
+            "corollary",
+            "bound",
+            "characterize",
+        )
+    return common
+
+
+def _classify_result_type(sentence: str, domain: str) -> str:
+    """Classify a result sentence into a coarse editorial type."""
+    lowered = sentence.lower()
+    formal_prefix = re.match(
+        r"\s*(theorem|lemma|proposition|corollary)\b",
+        lowered,
+    )
+    if formal_prefix or (
+        domain != "ml"
+        and any(keyword in lowered for keyword in ("theorem", "lemma", "proposition", "corollary"))
+    ):
+        return "theorem"
+    if domain == "ml" and any(
+        keyword in lowered
+        for keyword in ("outperform", "accuracy", "benchmark", "ablation", "dataset")
+    ):
+        return "empirical"
+    if domain == "crypto" and any(
+        keyword in lowered
+        for keyword in ("secure", "security", "adversary", "attack", "protocol")
+    ):
+        return "security_guarantee"
+    if any(keyword in lowered for keyword in ("introduce", "present", "propose")):
+        return "method"
+    if any(keyword in lowered for keyword in ("prove", "establish", "bound", "guarantee")):
+        return "guarantee"
+    return "finding"
+
+
+def _deduplicate_results(results: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove near-duplicate result statements while preserving first occurrence."""
+    deduped: List[Dict[str, Any]] = []
+    seen_keys = set()
+    for result in results:
+        statement = str(result.get("statement") or "").strip()
+        key = " ".join(_tokenize_for_dedup(statement)[:18])
+        if not statement or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(dict(result))
+    return deduped
+
+
+def _tokenize_for_dedup(text: str) -> List[str]:
+    """Tokenize text into lowercase words for simple result deduplication."""
+    return re.findall(r"[a-zA-Z0-9-]+", text.lower())
+
+
+def _find_statement_location(statement: str, sections: Dict[str, str]) -> str:
+    """Return the first section name containing the statement or its prefix."""
+    statement_prefix = " ".join(statement.lower().split()[:10])
+    for section_name, section_text in sections.items():
+        if statement_prefix and statement_prefix in section_text.lower():
+            return section_name
+    lowered_statement = statement.lower()
+    for section_name, section_text in sections.items():
+        if lowered_statement[:80] in section_text.lower():
+            return section_name
+    return "body"
+
+
+def _estimate_result_importance(result_type: str, statement: str, domain: str) -> float:
+    """Estimate result importance from type, domain, and statement cues."""
+    lowered_statement = statement.lower()
+    score = 0.45
+    type_weights = {
+        "theorem": 0.85,
+        "corollary": 0.72,
+        "proposition": 0.70,
+        "lemma": 0.62,
+        "guarantee": 0.76,
+        "security_guarantee": 0.84,
+        "empirical": 0.74,
+        "method": 0.68,
+        "finding": 0.58,
+        "summary": 0.40,
+    }
+    score = type_weights.get(result_type.lower(), score)
+    if "main result" in lowered_statement or "we prove" in lowered_statement:
+        score += 0.08
+    if "state-of-the-art" in lowered_statement or "outperform" in lowered_statement:
+        score += 0.08
+    if "secure" in lowered_statement or "security" in lowered_statement:
+        score += 0.06
+    if domain == "math" and result_type.lower() in {"theorem", "corollary", "proposition"}:
+        score += 0.04
+    if domain == "ml" and result_type.lower() == "empirical":
+        score += 0.04
+    if domain == "crypto" and result_type.lower() == "security_guarantee":
+        score += 0.04
+    return max(0.0, min(score, 1.0))
+
+
+def _default_result_significance(result_type: str, domain: str) -> str:
+    """Create a conservative significance explanation for a result type."""
+    normalized_type = result_type.lower()
+    if normalized_type in {"theorem", "lemma", "proposition", "corollary", "guarantee"}:
+        return "Formal result that supports the paper's main technical contribution."
+    if normalized_type == "empirical":
+        return "Empirical result that indicates how the method behaves on data or benchmarks."
+    if normalized_type == "security_guarantee":
+        return "Security-relevant result about guarantees, attacks, protocols, or assumptions."
+    if normalized_type == "method":
+        return "Methodological contribution that changes how the problem can be approached."
+    if domain == "ml":
+        return "Machine learning finding relevant to models, data, evaluation, or deployment."
+    if domain == "crypto":
+        return "Cryptography or security finding relevant to guarantees or attacks."
+    return "Result likely to be important for understanding the paper's contribution."
 
 
 def _split_sentences(text: str) -> List[str]:

@@ -14,6 +14,7 @@ from src.agents.tools.paper_selection_tool import (
     get_paper_selection_tool,
 )
 from src.agents.tools.problem_extraction_tool import get_problem_extraction_tool
+from src.agents.tools.results_extraction_tool import get_results_extraction_tool
 from src.agents.tools.topic_discovery_tool import (
     get_topic_discovery_tool,
     get_topic_title_tool,
@@ -230,6 +231,7 @@ def get_base_tools() -> List[AgentTool]:
         get_paper_selection_tool(),
         get_paper_relevance_tool(),
         get_problem_extraction_tool(),
+        get_results_extraction_tool(),
     ]
 
 
