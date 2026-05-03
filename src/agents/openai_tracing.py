@@ -155,13 +155,11 @@ def set_span_output(span: Any, output: Any) -> None:
     if span is None or not include_sensitive_trace_data():
         return
 
-    if hasattr(span, "set_output"):
-        span.set_output(serialize_for_trace(output))
-        return
-
     span_data = getattr(span, "span_data", None)
     if _is_generation_span_data(span_data):
         span_data.output = _generation_output(output)
+    elif hasattr(span, "set_output"):
+        span.set_output(serialize_for_trace(output))
     elif hasattr(span_data, "output"):
         span_data.output = serialize_for_trace(output)
     elif hasattr(span_data, "data") and isinstance(span_data.data, dict):
@@ -201,10 +199,7 @@ def serialize_for_trace(value: Any) -> str:
 
 
 def _generation_output(output: Any) -> list[Dict[str, Any]]:
-    if (
-        isinstance(output, list)
-        and all(isinstance(item, dict) for item in output)
-    ):
+    if isinstance(output, list) and all(isinstance(item, dict) for item in output):
         return output
 
     return [{"role": "assistant", "content": serialize_for_trace(output)}]

@@ -159,11 +159,19 @@ arxiv-editor/
 - ✅ Step 4.3: Representative Paper Selection Tool
 
 **Phase 5: AI-Powered Paper Analysis Tools**
-- Step 5.1: Problem Statement Extraction Tool
-- Step 5.2: Key Results Extraction Tool
-- Step 5.3: Impact Assessment Tool
+- ✅ Step 5.1: Problem Statement Extraction Tool
+- ✅ Step 5.2: Key Results Extraction Tool
+- ✅ Step 5.3: Impact Assessment Tool
 
-**Phase 5-10**: See CONTEXT.md for full implementation plan
+**Phase 6: Interactive Julius Summary Generation**
+- Step 6.1: User Request Intake and Preference Model
+- Step 6.2: Julius Conversation Session
+- Step 6.3: Multi-Agent Draft Generation with Hand-offs
+- Step 6.4: User-Guided Revision Loop
+- Step 6.5: Formatting, Quality Assurance, and Final Output
+- Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
+
+**Phase 7-10**: See CONTEXT.md for full implementation plan
 
 ## Testing
 
@@ -217,24 +225,6 @@ The coordination tools are also available through the normal agent tool system:
 `delegate_to_agent_tool`, `request_agent_extension_tool`,
 `collect_agent_results_tool`, `compile_one_pager_tool`, and `send_email_tool`.
 Email sending is side-effect free unless an `email_sender` callable is injected.
-
-## OpenAI Tracing
-
-Tool calls, injected LLM calls, Julius workflow runs, and specialist hand-offs
-are wrapped with OpenAI Agents SDK trace spans when `openai-agents` is installed
-and `OPENAI_API_KEY` is set. Traces are visible in the OpenAI Traces dashboard.
-
-```bash
-export OPENAI_API_KEY=...
-python -c "from src.agents import JuliusAgent; \
-JuliusAgent().run_delegated_workflow('Summarize probability research', agent_names=['Chris'])"
-```
-
-Set `OPENAI_AGENTS_DISABLE_TRACING=1` to disable trace export. Set
-`OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=false` to keep the span structure
-while omitting tool/model inputs and outputs. Large payloads are truncated by
-default; adjust `OPENAI_AGENTS_TRACE_MAX_CHARS` if you need longer trace
-payloads during debugging.
 
 ## Text Embeddings
 
