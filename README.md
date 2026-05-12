@@ -164,7 +164,7 @@ arxiv-editor/
 - ✅ Step 5.3: Impact Assessment Tool
 
 **Phase 6: Interactive Julius Summary Generation**
-- Step 6.1: User Request Intake and Preference Model
+- ✅ Step 6.1: User Request Intake and Preference Model
 - Step 6.2: Julius Conversation Session
 - Step 6.3: Multi-Agent Draft Generation with Hand-offs
 - Step 6.4: User-Guided Revision Loop
@@ -223,8 +223,34 @@ print(workflow["one_pager"]["content"])
 
 The coordination tools are also available through the normal agent tool system:
 `delegate_to_agent_tool`, `request_agent_extension_tool`,
-`collect_agent_results_tool`, `compile_one_pager_tool`, and `send_email_tool`.
-Email sending is side-effect free unless an `email_sender` callable is injected.
+`collect_agent_results_tool`, `compile_one_pager_tool`, `send_email_tool`,
+`parse_user_request_tool`, and `clarify_request_tool`. Email sending is
+side-effect free unless an `email_sender` callable is injected.
+
+## User Request Intake
+
+Step 6.1 adds `SummaryRequest` in `src/generation/user_request.py`. It captures
+the user's topic query, date range, audience, depth, tone, output format, topic
+and paper limits, category filters, and delivery preference before Julius starts
+fetching papers or delegating specialist work.
+
+```python
+from src.generation import parse_user_request_tool, clarify_request_tool
+
+parsed = parse_user_request_tool(
+    "Give me a non-technical summary of last week's LLM agent papers",
+    reference_date="2026-05-12",
+)
+
+print(parsed["summary_request"]["topic_query"])  # LLM agent
+print(parsed["needs_clarification"])             # False
+```
+
+`SummaryRequestSession` persists the latest preferences across refinement turns,
+so follow-ups such as "make it shorter" keep the prior topic, date range, and
+delivery choices unless the user overrides them. Julius exposes the same parser
+through its normal tool system and stores the current request on
+`julius.request_session`.
 
 ## Text Embeddings
 

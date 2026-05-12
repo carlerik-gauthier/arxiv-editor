@@ -15,6 +15,10 @@ from src.agents.specialized_agents import (
     SpecializedAgent,
     create_all_specialized_agents,
 )
+from src.generation.user_request import (
+    SummaryRequestSession,
+    clarify_request_tool,
+)
 
 
 class WorkflowState(str, Enum):
@@ -188,6 +192,7 @@ class JuliusAgent(BaseAgent):
         self.agent_task_status: Dict[str, AgentTaskStatus] = {}
         self.extension_requests: List[Dict[str, Any]] = []
         self.email_sender = email_sender
+        self.request_session = SummaryRequestSession()
         self.specialist_agents = self._build_agent_registry(
             specialist_agents or create_all_specialized_agents()
         )
@@ -256,7 +261,52 @@ class JuliusAgent(BaseAgent):
                 function=self.send_email_tool,
                 required_parameters=["recipient", "content"],
             ),
+            AgentTool(
+                name="parse_user_request_tool",
+                description=(
+                    "Parse a natural-language summary request into a persistent "
+                    "SummaryRequest preference model."
+                ),
+                function=self.parse_user_request_tool,
+                required_parameters=["message"],
+            ),
+            AgentTool(
+                name="clarify_request_tool",
+                description=(
+                    "Generate focused follow-up questions for missing or ambiguous "
+                    "SummaryRequest fields."
+                ),
+                function=self.clarify_request_tool,
+                required_parameters=["summary_request"],
+            ),
         ]
+
+    def parse_user_request_tool(
+        self,
+        message: str,
+        defaults: Optional[Any] = None,
+        reference_date: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Parse and persist a user's requested summary preferences.
+
+        Julius keeps the latest SummaryRequest in `request_session`, so later
+        refinement turns can update only the fields the user changes.
+        """
+        return self.request_session.apply_message(
+            message=message,
+            defaults=defaults,
+            reference_date=reference_date,
+        )
+
+    def clarify_request_tool(self, summary_request: Any) -> Dict[str, Any]:
+        """
+        Ask only the follow-up questions required before work can proceed.
+
+        Topic, date range, audience, depth, tone, and format have useful
+        defaults. Delivery details and contradictions still need clarification.
+        """
+        return clarify_request_tool(summary_request)
 
     def parse_user_request(
         self,
@@ -268,22 +318,53 @@ class JuliusAgent(BaseAgent):
         """
         Parse the user request into workflow inputs Julius can plan from.
 
-        This phase-3 parser is intentionally conservative and deterministic. It
-        keeps the raw request, extracts simple ISO dates when present, and leaves
-        richer language understanding to the injected LLM layer in later phases.
+        The phase-6.1 SummaryRequest parser now handles audience, depth, tone,
+        format, categories, delivery, and relative date ranges. The return value
+        keeps the phase-3 workflow keys for compatibility with existing plans.
         """
+        preference_defaults = dict(preferences or {})
+        if date_range:
+            preference_defaults["date_range"] = date_range
+
+        parsed_preferences = self.parse_user_request_tool(
+            user_request,
+            defaults=preference_defaults or None,
+        )
+        summary_request = parsed_preferences["summary_request"]
+
         extracted_dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", user_request)
-        parsed_date_range = dict(date_range or {})
+        parsed_date_range = dict(date_range or summary_request.get("date_range", {}))
         if extracted_dates and "start_date" not in parsed_date_range:
             parsed_date_range["start_date"] = extracted_dates[0]
         if len(extracted_dates) > 1 and "end_date" not in parsed_date_range:
             parsed_date_range["end_date"] = extracted_dates[1]
 
+        topic_query = summary_request.get("topic_query")
+        planned_topics = topics or ([topic_query] if topic_query else [])
+        workflow_preferences = dict(preferences or {})
+        workflow_preferences.update(
+            {
+                "audience": summary_request.get("audience"),
+                "depth": summary_request.get("depth"),
+                "tone": summary_request.get("tone"),
+                "format": summary_request.get("format"),
+                "max_topics": summary_request.get("max_topics"),
+                "max_papers": summary_request.get("max_papers"),
+                "must_include_categories": summary_request.get("must_include_categories", []),
+                "exclude_categories": summary_request.get("exclude_categories", []),
+                "delivery": summary_request.get("delivery", {}),
+            }
+        )
+
         return {
             "raw_request": user_request,
             "date_range": parsed_date_range,
-            "topics": topics or [],
-            "preferences": preferences or {},
+            "topics": planned_topics,
+            "preferences": workflow_preferences,
+            "summary_request": summary_request,
+            "missing_fields": parsed_preferences["missing_fields"],
+            "ambiguous_fields": parsed_preferences["ambiguous_fields"],
+            "needs_clarification": parsed_preferences["needs_clarification"],
         }
 
     def create_execution_plan(

@@ -33,6 +33,7 @@ from src.agents.tools.topic_discovery_tool import (
     get_topic_discovery_tool,
     get_topic_title_tool,
 )
+from src.generation.user_request import clarify_request_tool, parse_user_request_tool
 
 __all__ = [
     "analyze_paper_tool",
@@ -56,6 +57,8 @@ __all__ = [
     "get_results_extraction_tool",
     "get_topic_discovery_tool",
     "get_topic_title_tool",
+    "clarify_request_tool",
+    "parse_user_request_tool",
     "rank_papers_by_relevance_tool",
     "select_representative_papers_tool",
 ]
