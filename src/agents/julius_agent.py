@@ -23,6 +23,8 @@ from src.generation.user_request import (
 )
 from src.generation.synthesizer import ContentSynthesizer
 from src.agents.tools.synthesis_tools import get_synthesis_tools
+from src.agents.tools.formatting_tool import get_formatting_tool
+from src.agents.tools.quality_check_tool import get_quality_check_tool
 
 
 class WorkflowState(str, Enum):
@@ -291,6 +293,8 @@ class JuliusAgent(BaseAgent):
                 required_parameters=["summary_request"],
             ),
             *get_synthesis_tools(),
+            get_formatting_tool(),
+            get_quality_check_tool(),
         ]
 
     def parse_user_request_tool(

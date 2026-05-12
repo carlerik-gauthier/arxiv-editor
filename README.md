@@ -174,7 +174,7 @@ arxiv-editor/
 - ✅ Step 6.2: Julius Conversation Session
 - ✅ Step 6.3: Multi-Agent Draft Generation with Hand-offs
 - ✅ Step 6.4: User-Guided Revision Loop
-- Step 6.5: Formatting, Quality Assurance, and Final Output
+- ✅ Step 6.5: Formatting, Quality Assurance, and Final Output
 - Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
 
 **Phase 7-10**: See CONTEXT.md for full implementation plan
@@ -318,6 +318,24 @@ from src.generation import parse_revision_request_tool, revise_draft_tool
 
 revision = parse_revision_request_tool("make the first topic more intuitive", draft)
 draft_v2 = revise_draft_tool(draft, revision, draft_version=2)
+```
+
+## Formatting And Quality
+
+Step 6.5 adds `DocumentFormatter` and `DocumentValidator`, plus agent tools
+`format_document_tool` and `validate_quality_tool`. Julius validates drafts
+before review, validates again after revisions, formats approved output as
+Markdown or HTML, saves it to `outputs/`, and records concise warnings.
+
+```python
+from src.agents.tools import format_document_tool, validate_quality_tool
+
+formatted = format_document_tool(draft, output_format="markdown")
+report = validate_quality_tool(
+    formatted["document"],
+    draft["summary_request"],
+    source_papers=[{"title": "Agent Planning Benchmarks", "arxiv_id": "2605.00001"}],
+)
 ```
 
 ## Text Embeddings

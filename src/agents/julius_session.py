@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -28,6 +29,8 @@ from src.generation.revision import (
     revise_draft_tool,
     rollback_draft_tool,
 )
+from src.agents.tools.formatting_tool import format_document_tool
+from src.agents.tools.quality_check_tool import validate_quality_tool
 
 
 class JuliusSessionState(str, Enum):
@@ -83,12 +86,14 @@ class JuliusSession:
         reference_date: Optional[Any] = None,
         selected_papers: Optional[List[Dict[str, Any]]] = None,
         analyses: Optional[List[Dict[str, Any]]] = None,
+        output_dir: str | Path = "outputs",
     ) -> None:
         self.julius = julius or JuliusAgent()
         self.progress_callback = progress_callback
         self.reference_date = reference_date
         self.selected_papers = selected_papers or []
         self.analyses = analyses or []
+        self.output_dir = Path(output_dir)
         self.state = JuliusSessionState.INTAKE
         self.conversation_history: List[Dict[str, Any]] = []
         self.current_request: Optional[SummaryRequest] = None
@@ -96,6 +101,8 @@ class JuliusSession:
         self.draft_versions: Dict[str, Dict[str, Any]] = {}
         self.user_feedback: List[Dict[str, Any]] = []
         self.progress_events: List[Dict[str, Any]] = []
+        self.validation_reports: List[Dict[str, Any]] = []
+        self.final_output_path: Optional[str] = None
 
     def handle_user_message(self, message: str) -> Dict[str, Any]:
         """
@@ -167,6 +174,8 @@ class JuliusSession:
             "draft_versions": dict(self.draft_versions),
             "user_feedback": list(self.user_feedback),
             "progress_events": list(self.progress_events),
+            "validation_reports": list(self.validation_reports),
+            "final_output_path": self.final_output_path,
         }
 
     def _update_request(self, message: str, intent: str) -> JuliusSessionResponse:
@@ -232,11 +241,16 @@ class JuliusSession:
         self.emit_progress("Compiling the draft preview.")
 
         draft = draft_result["draft"]
+        validation = self._validate_draft(draft)
         self._store_draft(draft)
         self.state = JuliusSessionState.AWAITING_REVIEW
         return self._build_response(
-            "First draft is ready for review.",
-            actions_taken=["generated_first_draft", "coordinated_specialist_handoffs"],
+            self._message_with_warnings("First draft is ready for review.", validation),
+            actions_taken=[
+                "generated_first_draft",
+                "coordinated_specialist_handoffs",
+                "validated_draft",
+            ],
             draft_preview=draft["content"],
         )
 
@@ -282,15 +296,17 @@ class JuliusSession:
                 summary_request=self.current_request,
                 draft_version=len(self.drafts) + 1,
             )
+            validation = self._validate_draft(revised)
             self._store_draft(revised)
             self.state = JuliusSessionState.AWAITING_REVIEW
             return self._build_response(
-                "I revised the draft.",
+                self._message_with_warnings("I revised the draft.", validation),
                 actions_taken=[
                     "recorded_feedback",
                     "updated_summary_request",
                     "parsed_revision_request",
                     "revised_draft",
+                    "validated_draft",
                 ],
                 draft_preview=revised["content"],
             )
@@ -328,8 +344,12 @@ class JuliusSession:
 
         self.state = JuliusSessionState.FINALIZED
         final_draft = mark_draft_final_tool(self.drafts[-1], approved=True)
+        formatted = self._format_final_document(final_draft)
+        validation = self._validate_document(formatted["document"], final_draft)
+        output_path = self._save_final_document(formatted)
         self.drafts[-1] = final_draft
         self.draft_versions[f"draft_v{final_draft['version']}"] = final_draft
+        self.final_output_path = str(output_path)
         self.user_feedback.append(
             {
                 "message": message,
@@ -344,9 +364,12 @@ class JuliusSession:
             action = "finalized_for_email_delivery"
 
         return self._build_response(
-            "Finalized the current draft. Delivery will be handled by the later output workflow.",
-            actions_taken=["finalized_draft", action],
-            draft_preview=final_draft["content"],
+            self._message_with_warnings(
+                f"Finalized and saved the current draft to {output_path}.",
+                validation,
+            ),
+            actions_taken=["finalized_draft", action, "formatted_document", "validated_final_document", "saved_final_document"],
+            draft_preview=formatted["document"] if not formatted["is_binary"] else final_draft["content"],
         )
 
     def _rollback_draft(self, message: str) -> JuliusSessionResponse:
@@ -374,6 +397,49 @@ class JuliusSession:
         """Store draft history under both list and stable version key."""
         self.drafts.append(draft)
         self.draft_versions[f"draft_v{draft['version']}"] = draft
+
+    def _format_final_document(self, draft: Dict[str, Any]) -> Dict[str, Any]:
+        """Format the final draft for the requested delivery mode."""
+        output_format = "markdown"
+        if self.current_request and self.current_request.delivery.mode == DeliveryMode.EMAIL:
+            output_format = "html"
+        return format_document_tool(draft, output_format=output_format)
+
+    def _validate_draft(self, draft: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate a draft before showing it to the user."""
+        return self._validate_document(draft.get("content", ""), draft)
+
+    def _validate_document(self, document: Any, draft: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate a document and store the report."""
+        report = validate_quality_tool(
+            document=document,
+            summary_request=draft.get("summary_request") or self.current_request,
+            source_papers=self.selected_papers,
+        )
+        self.validation_reports.append(report)
+        return report
+
+    def _save_final_document(self, formatted: Dict[str, Any]) -> Path:
+        """Save the final formatted document under outputs."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        extension = {"markdown": "md", "html": "html", "pdf": "pdf"}.get(
+            formatted["output_format"],
+            "md",
+        )
+        path = self.output_dir / f"julius_summary_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.{extension}"
+        document = formatted["document"]
+        if formatted["is_binary"]:
+            path.write_bytes(document)
+        else:
+            path.write_text(str(document), encoding="utf-8")
+        return path
+
+    def _message_with_warnings(self, message: str, validation: Dict[str, Any]) -> str:
+        """Append concise validation warnings to a user-facing message."""
+        warnings = validation.get("warnings", [])
+        if not warnings:
+            return message
+        return f"{message} Warnings: {'; '.join(warnings[:2])}"
 
     def _request_acknowledgement(self, next_questions: List[str]) -> str:
         """Summarize the interpreted request in one concise message."""

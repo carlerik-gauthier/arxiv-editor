@@ -24,6 +24,8 @@ from src.generation.revision import (
     revise_draft_tool,
     rollback_draft_tool,
 )
+from src.generation.formatter import DocumentFormatter
+from src.generation.validator import DocumentValidator
 
 __all__ = [
     "Audience",
@@ -31,6 +33,8 @@ __all__ = [
     "DateRangePreference",
     "DeliveryMode",
     "DeliveryPreference",
+    "DocumentFormatter",
+    "DocumentValidator",
     "Depth",
     "RequestParseResult",
     "RevisionOperation",
