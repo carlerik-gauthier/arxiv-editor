@@ -608,7 +608,7 @@ def _strip_preference_phrases(value: str) -> str:
         r"\b(?:shorter|longer|deeper|detailed|concise|quick|standard)\b",
         r"\b(?:bullet|bullets|rankings?|top|custom|format|papers?|research|articles?|arxiv)\b",
         r"\b(?:from|to|only|exclude|without|with|for)\b",
-        r"\b(?:the|a|an|me|it|please)\b",
+        r"\b(?:the|a|an|and|or|me|it|please)\b",
         r"\b(?:today|yesterday)\b",
         r"'s\b",
     ]
@@ -682,6 +682,8 @@ _GENERIC_TOPIC_WORDS = {
     "the",
     "a",
     "an",
+    "and",
+    "or",
     "me",
     "it",
     "please",

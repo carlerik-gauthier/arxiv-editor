@@ -8,6 +8,15 @@ from src.agents.julius_agent import (
     JuliusAgent,
     WorkflowState,
 )
+from src.agents.julius_session import (
+    JuliusIntent,
+    JuliusSession,
+    JuliusSessionResponse,
+    JuliusSessionState,
+    classify_user_intent_tool,
+    explain_draft_choice_tool,
+    update_summary_request_tool,
+)
 from src.agents.specialized_agents import (
     AbdoulayeAgent,
     AlainAgent,
@@ -36,11 +45,18 @@ __all__ = [
     "HandoffContext",
     "JeanBaptisteAgent",
     "JuliusAgent",
+    "JuliusIntent",
+    "JuliusSession",
+    "JuliusSessionResponse",
+    "JuliusSessionState",
     "MichelAgent",
     "SpecializedAgent",
     "ToolCall",
     "ToolResult",
     "WorkflowState",
+    "classify_user_intent_tool",
     "create_all_specialized_agents",
     "create_specialized_agent",
+    "explain_draft_choice_tool",
+    "update_summary_request_tool",
 ]

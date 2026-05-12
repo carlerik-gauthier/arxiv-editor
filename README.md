@@ -94,9 +94,15 @@ python main.py info
 python main.py test
 ```
 
+**Chat with Julius interactively:**
+```bash
+python main.py chat
+```
+
 ### CLI Commands
 
 - `generate` - Generate a research one-pager
+- `chat` - Start an interactive Julius session
 - `info` - Display information about agents and the system
 - `setup` - Interactive setup wizard for configuration
 - `test` - Run installation tests
@@ -165,7 +171,7 @@ arxiv-editor/
 
 **Phase 6: Interactive Julius Summary Generation**
 - ✅ Step 6.1: User Request Intake and Preference Model
-- Step 6.2: Julius Conversation Session
+- ✅ Step 6.2: Julius Conversation Session
 - Step 6.3: Multi-Agent Draft Generation with Hand-offs
 - Step 6.4: User-Guided Revision Loop
 - Step 6.5: Formatting, Quality Assurance, and Final Output
@@ -251,6 +257,30 @@ so follow-ups such as "make it shorter" keep the prior topic, date range, and
 delivery choices unless the user overrides them. Julius exposes the same parser
 through its normal tool system and stores the current request on
 `julius.request_session`.
+
+## Julius Conversation Session
+
+Step 6.2 adds `JuliusSession` in `src/agents/julius_session.py`. It maintains
+conversation history, the current `SummaryRequest`, draft previews, feedback,
+and progress events. The main entry point is `handle_user_message(message)`,
+which returns `message`, `state`, `summary_request`, `draft_preview`,
+`actions_taken`, and `next_questions`.
+
+```python
+from src.agents import JuliusSession
+
+session = JuliusSession(reference_date="2026-05-12")
+session.handle_user_message("Give me a mixed audience summary of LLM agents")
+session.handle_user_message("make it shorter and only cs.AI")
+response = session.handle_user_message("generate draft")
+
+print(response["state"])         # AWAITING_REVIEW
+print(response["draft_preview"]) # deterministic preview for review
+```
+
+The session supports intake, clarification, planning, generation, review,
+revision, draft-question answering, and finalization states. Draft previews are
+lightweight placeholders until step 6.3 adds real multi-agent draft generation.
 
 ## Text Embeddings
 

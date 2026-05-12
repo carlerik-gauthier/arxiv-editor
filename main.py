@@ -218,6 +218,37 @@ def generate(days, start_date, end_date, agents, output_dir, no_email=True, emai
 
 
 @cli.command()
+def chat():
+    """Start an interactive Julius conversation session."""
+    from src.agents import JuliusSession, JuliusSessionState
+
+    print_banner()
+    console.print("Julius chat. Type 'quit' or 'exit' to stop.\n", style="cyan")
+
+    def show_progress(message):
+        console.print(f"[dim]{message}[/dim]")
+
+    session = JuliusSession(progress_callback=show_progress)
+    while session.state != JuliusSessionState.FINALIZED:
+        try:
+            user_message = click.prompt("You", type=str)
+        except (EOFError, KeyboardInterrupt):
+            console.print("\nSession ended.")
+            break
+
+        if user_message.strip().lower() in {"quit", "exit"}:
+            console.print("Session ended.")
+            break
+
+        response = session.handle_user_message(user_message)
+        console.print(Panel(response["message"], title=response["state"], border_style="cyan"))
+        if response.get("draft_preview"):
+            console.print(response["draft_preview"])
+        for question in response.get("next_questions", []):
+            console.print(f"[yellow]?[/yellow] {question}")
+
+
+@cli.command()
 def info():
     """Display information about the agents and system."""
     print_banner()
