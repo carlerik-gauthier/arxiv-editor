@@ -17,6 +17,15 @@ from src.agents.julius_session import (
     explain_draft_choice_tool,
     update_summary_request_tool,
 )
+from src.generation.revision import (
+    RevisionOperation,
+    RevisionRequest,
+    RevisionTarget,
+    mark_draft_final_tool,
+    parse_revision_request_tool,
+    revise_draft_tool,
+    rollback_draft_tool,
+)
 from src.agents.specialized_agents import (
     AbdoulayeAgent,
     AlainAgent,
@@ -50,6 +59,9 @@ __all__ = [
     "JuliusSessionResponse",
     "JuliusSessionState",
     "MichelAgent",
+    "RevisionOperation",
+    "RevisionRequest",
+    "RevisionTarget",
     "SpecializedAgent",
     "ToolCall",
     "ToolResult",
@@ -58,5 +70,9 @@ __all__ = [
     "create_all_specialized_agents",
     "create_specialized_agent",
     "explain_draft_choice_tool",
+    "mark_draft_final_tool",
+    "parse_revision_request_tool",
+    "revise_draft_tool",
+    "rollback_draft_tool",
     "update_summary_request_tool",
 ]

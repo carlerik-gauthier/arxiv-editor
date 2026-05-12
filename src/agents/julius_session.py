@@ -22,6 +22,12 @@ from src.generation.user_request import (
     clarify_request_tool,
     parse_user_request_tool,
 )
+from src.generation.revision import (
+    mark_draft_final_tool,
+    parse_revision_request_tool,
+    revise_draft_tool,
+    rollback_draft_tool,
+)
 
 
 class JuliusSessionState(str, Enum):
@@ -87,6 +93,7 @@ class JuliusSession:
         self.conversation_history: List[Dict[str, Any]] = []
         self.current_request: Optional[SummaryRequest] = None
         self.drafts: List[Dict[str, Any]] = []
+        self.draft_versions: Dict[str, Dict[str, Any]] = {}
         self.user_feedback: List[Dict[str, Any]] = []
         self.progress_events: List[Dict[str, Any]] = []
 
@@ -157,6 +164,7 @@ class JuliusSession:
                 self.current_request.model_dump(mode="json") if self.current_request else None
             ),
             "drafts": list(self.drafts),
+            "draft_versions": dict(self.draft_versions),
             "user_feedback": list(self.user_feedback),
             "progress_events": list(self.progress_events),
         }
@@ -224,7 +232,7 @@ class JuliusSession:
         self.emit_progress("Compiling the draft preview.")
 
         draft = draft_result["draft"]
-        self.drafts.append(draft)
+        self._store_draft(draft)
         self.state = JuliusSessionState.AWAITING_REVIEW
         return self._build_response(
             "First draft is ready for review.",
@@ -234,6 +242,9 @@ class JuliusSession:
 
     def _revise_request_or_draft(self, message: str) -> JuliusSessionResponse:
         """Apply feedback to the request and refresh the draft preview if one exists."""
+        if message.lower().startswith("rollback"):
+            return self._rollback_draft(message)
+
         self.user_feedback.append(
             {
                 "message": message,
@@ -250,21 +261,38 @@ class JuliusSession:
         self.julius.request_session.remember(self.current_request, source="revision")
 
         if self.drafts:
+            revision = parse_revision_request_tool(message, self.drafts[-1])
             self.emit_progress("Applying the requested revision.")
-            draft = self.julius.synthesizer.synthesize_draft(
+            if revision["requires_agent_review"]:
+                self.emit_progress("Requesting specialist review for the revision.")
+                draft_result = self.julius.generate_first_draft_tool(
+                    summary_request=self.current_request,
+                    selected_papers=self.selected_papers,
+                    analyses=self.analyses,
+                    previous_feedback=self.user_feedback,
+                    draft_version=len(self.drafts) + 1,
+                )
+                draft = draft_result["draft"]
+            else:
+                draft = self.drafts[-1]
+
+            revised = revise_draft_tool(
+                draft=draft,
+                revision_request=revision,
                 summary_request=self.current_request,
-                selected_papers=self.selected_papers,
-                analyses=self.analyses,
-                previous_feedback=self.user_feedback,
                 draft_version=len(self.drafts) + 1,
             )
-            draft["change_summary"] = message
-            self.drafts.append(draft)
+            self._store_draft(revised)
             self.state = JuliusSessionState.AWAITING_REVIEW
             return self._build_response(
-                "I updated the draft preview.",
-                actions_taken=["recorded_feedback", "updated_summary_request", "revised_draft_preview"],
-                draft_preview=draft["content"],
+                "I revised the draft.",
+                actions_taken=[
+                    "recorded_feedback",
+                    "updated_summary_request",
+                    "parsed_revision_request",
+                    "revised_draft",
+                ],
+                draft_preview=revised["content"],
             )
 
         self.state = JuliusSessionState.PLANNING
@@ -299,6 +327,9 @@ class JuliusSession:
             )
 
         self.state = JuliusSessionState.FINALIZED
+        final_draft = mark_draft_final_tool(self.drafts[-1], approved=True)
+        self.drafts[-1] = final_draft
+        self.draft_versions[f"draft_v{final_draft['version']}"] = final_draft
         self.user_feedback.append(
             {
                 "message": message,
@@ -315,8 +346,34 @@ class JuliusSession:
         return self._build_response(
             "Finalized the current draft. Delivery will be handled by the later output workflow.",
             actions_taken=["finalized_draft", action],
-            draft_preview=self.drafts[-1]["content"],
+            draft_preview=final_draft["content"],
         )
+
+    def _rollback_draft(self, message: str) -> JuliusSessionResponse:
+        """Restore a prior draft version by message such as 'rollback to v1'."""
+        if not self.drafts:
+            return self._build_response(
+                "There is no draft history to roll back.",
+                actions_taken=["rollback_failed_no_drafts"],
+            )
+        version = 1
+        for token in message.replace("v", " ").split():
+            if token.isdigit():
+                version = int(token)
+                break
+        restored = rollback_draft_tool(self.drafts, version)
+        self._store_draft(restored)
+        self.state = JuliusSessionState.AWAITING_REVIEW
+        return self._build_response(
+            f"Restored draft v{version}.",
+            actions_taken=["rolled_back_draft"],
+            draft_preview=restored["content"],
+        )
+
+    def _store_draft(self, draft: Dict[str, Any]) -> None:
+        """Store draft history under both list and stable version key."""
+        self.drafts.append(draft)
+        self.draft_versions[f"draft_v{draft['version']}"] = draft
 
     def _request_acknowledgement(self, next_questions: List[str]) -> str:
         """Summarize the interpreted request in one concise message."""
@@ -380,12 +437,12 @@ def classify_user_intent_tool(message: str, session_state: str = "INTAKE") -> Di
         return {"intent": JuliusIntent.DRAFT_QUESTION.value}
     if state == JuliusSessionState.AWAITING_REVIEW.value and any(
         keyword in lowered
-        for keyword in ("shorter", "longer", "revise", "rewrite", "simplify", "technical", "remove", "add", "focus")
+        for keyword in ("shorter", "longer", "revise", "rewrite", "simplify", "technical", "intuitive", "remove", "add", "focus", "rollback")
     ):
         return {"intent": JuliusIntent.REVISION.value}
     if any(keyword in lowered for keyword in ("only ", "exclude", "remove ", "include ", "last ", "past ", "cs.", "math.", "stat.")):
         return {"intent": JuliusIntent.SCOPE_UPDATE.value}
-    if any(keyword in lowered for keyword in ("shorter", "brief", "deep", "technical", "non-technical", "audience", "tone", "format", "bullet")):
+    if any(keyword in lowered for keyword in ("shorter", "brief", "deep", "technical", "non-technical", "intuitive", "audience", "tone", "format", "bullet")):
         return {"intent": JuliusIntent.PREFERENCE_UPDATE.value}
     if any(keyword in lowered for keyword in ("summary", "summarize", "digest", "papers", "research", "one-pager", "one pager")):
         return {"intent": JuliusIntent.NEW_SUMMARY_REQUEST.value}

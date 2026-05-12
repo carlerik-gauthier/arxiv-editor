@@ -327,6 +327,7 @@ class JuliusAgent(BaseAgent):
         analyses: Optional[List[Dict[str, Any]]] = None,
         previous_feedback: Optional[List[Dict[str, Any]]] = None,
         agent_names: Optional[List[str]] = None,
+        draft_version: int = 1,
     ) -> Dict[str, Any]:
         """
         Create Julius's first draft with specialist hand-off provenance.
@@ -375,7 +376,7 @@ class JuliusAgent(BaseAgent):
             analyses=analyses or [],
             agent_results=collected["results"],
             previous_feedback=previous_feedback or [],
-            draft_version=1,
+            draft_version=draft_version,
         )
         self._transition_to(WorkflowState.REVIEWING)
         return {

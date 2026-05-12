@@ -173,7 +173,7 @@ arxiv-editor/
 - ✅ Step 6.1: User Request Intake and Preference Model
 - ✅ Step 6.2: Julius Conversation Session
 - ✅ Step 6.3: Multi-Agent Draft Generation with Hand-offs
-- Step 6.4: User-Guided Revision Loop
+- ✅ Step 6.4: User-Guided Revision Loop
 - Step 6.5: Formatting, Quality Assurance, and Final Output
 - Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
 
@@ -303,6 +303,21 @@ result = julius.generate_first_draft_tool(
 
 print(result["draft"]["content"])
 print(result["draft"]["provenance"]["agent_callbacks"])
+```
+
+## Draft Revisions
+
+Step 6.4 adds `RevisionRequest` and revision tools in
+`src/generation/revision.py`. Julius can parse feedback, apply local edits,
+flag revisions that need specialist review, store `draft_v1`, `draft_v2`, and
+later versions, roll back to an earlier draft, and mark the approved final
+draft immutable.
+
+```python
+from src.generation import parse_revision_request_tool, revise_draft_tool
+
+revision = parse_revision_request_tool("make the first topic more intuitive", draft)
+draft_v2 = revise_draft_tool(draft, revision, draft_version=2)
 ```
 
 ## Text Embeddings
