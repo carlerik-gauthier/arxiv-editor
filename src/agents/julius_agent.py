@@ -16,9 +16,13 @@ from src.agents.specialized_agents import (
     create_all_specialized_agents,
 )
 from src.generation.user_request import (
+    Audience,
+    SummaryRequest,
     SummaryRequestSession,
     clarify_request_tool,
 )
+from src.generation.synthesizer import ContentSynthesizer
+from src.agents.tools.synthesis_tools import get_synthesis_tools
 
 
 class WorkflowState(str, Enum):
@@ -193,6 +197,7 @@ class JuliusAgent(BaseAgent):
         self.extension_requests: List[Dict[str, Any]] = []
         self.email_sender = email_sender
         self.request_session = SummaryRequestSession()
+        self.synthesizer = ContentSynthesizer(llm_client=llm_client)
         self.specialist_agents = self._build_agent_registry(
             specialist_agents or create_all_specialized_agents()
         )
@@ -279,6 +284,13 @@ class JuliusAgent(BaseAgent):
                 function=self.clarify_request_tool,
                 required_parameters=["summary_request"],
             ),
+            AgentTool(
+                name="generate_first_draft_tool",
+                description="Coordinate specialist hand-offs and synthesize the first draft.",
+                function=self.generate_first_draft_tool,
+                required_parameters=["summary_request"],
+            ),
+            *get_synthesis_tools(),
         ]
 
     def parse_user_request_tool(
@@ -307,6 +319,72 @@ class JuliusAgent(BaseAgent):
         defaults. Delivery details and contradictions still need clarification.
         """
         return clarify_request_tool(summary_request)
+
+    def generate_first_draft_tool(
+        self,
+        summary_request: Any,
+        selected_papers: Optional[List[Dict[str, Any]]] = None,
+        analyses: Optional[List[Dict[str, Any]]] = None,
+        previous_feedback: Optional[List[Dict[str, Any]]] = None,
+        agent_names: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create Julius's first draft with specialist hand-off provenance.
+
+        This deterministic phase-6.3 workflow records which specialists were
+        asked to review the request and lets ContentSynthesizer render the draft.
+        """
+        request = SummaryRequest.model_validate(summary_request)
+        selected_agents = agent_names or self._select_agents_for_summary_request(request)
+        self._transition_to(WorkflowState.PLANNING)
+        parsed_request = {
+            "raw_request": request.topic_query or "ArXiv research summary",
+            "date_range": request.date_range.model_dump(mode="json"),
+            "topics": [request.topic_query] if request.topic_query else [],
+            "preferences": request.model_dump(mode="json"),
+            "summary_request": request.model_dump(mode="json"),
+        }
+        plan = self.create_execution_plan(parsed_request, agent_names=selected_agents)
+
+        self._transition_to(WorkflowState.DELEGATING)
+        for assignment in plan["assignments"]:
+            assignment["constraints"]["summary_request"] = request.model_dump(mode="json")
+            assignment["constraints"]["selected_papers"] = selected_papers or []
+            self._execute_coordination_tool("delegate_to_agent_tool", assignment)
+
+        if request.audience in {Audience.NON_EXPERT, Audience.MIXED} and "Michel" not in selected_agents:
+            self._execute_coordination_tool(
+                "delegate_to_agent_tool",
+                {
+                    "agent_name": "Michel",
+                    "task_description": "Review the draft plan for accessible explanations and terminology.",
+                    "constraints": {"summary_request": request.model_dump(mode="json")},
+                },
+            )
+            selected_agents = [*selected_agents, "Michel"]
+
+        self._transition_to(WorkflowState.COLLECTING)
+        collected = self._execute_coordination_tool(
+            "collect_agent_results_tool",
+            {"agent_names": selected_agents},
+        )
+        self._transition_to(WorkflowState.COMPILING)
+        draft = self.synthesizer.synthesize_draft(
+            summary_request=request,
+            selected_papers=selected_papers or [],
+            analyses=analyses or [],
+            agent_results=collected["results"],
+            previous_feedback=previous_feedback or [],
+            draft_version=1,
+        )
+        self._transition_to(WorkflowState.REVIEWING)
+        return {
+            "draft": draft,
+            "plan": plan,
+            "agent_results": collected,
+            "selected_agents": selected_agents,
+            "workflow_state": self.workflow_state.value,
+        }
 
     def parse_user_request(
         self,
@@ -690,6 +768,36 @@ class JuliusAgent(BaseAgent):
             f"Review recent ArXiv work in {', '.join(agent.categories)} for "
             f"{', '.join(topics)}. User request: {parsed_request['raw_request']}"
         )
+
+    def _select_agents_for_summary_request(self, request: SummaryRequest) -> List[str]:
+        """Select specialists from category filters and topic keywords."""
+        included = set(request.must_include_categories)
+        if included:
+            matches = [
+                agent_name
+                for agent_name, agent in self.specialist_agents.items()
+                if included.intersection(agent.categories)
+            ]
+            if matches:
+                return matches
+
+        topic = (request.topic_query or "").lower()
+        keyword_map = {
+            "JeanBaptiste": ("llm", "agent", "nlp", "language", "data", "ai"),
+            "Abdoulaye": ("machine learning", "learning", "neural", "model"),
+            "Elisa": ("crypto", "cryptography", "security", "optimization"),
+            "Chris": ("probability", "stochastic", "statistics", "random"),
+            "Alain": ("algebra", "group", "ring"),
+            "Bruno": ("geometry", "riemannian", "spectral"),
+            "Felix": ("dynamic", "symplectic", "system"),
+            "Michel": ("intuition", "education", "overview"),
+        }
+        selected = [
+            agent_name
+            for agent_name, keywords in keyword_map.items()
+            if agent_name in self.specialist_agents and any(keyword in topic for keyword in keywords)
+        ]
+        return selected or list(self.specialist_agents)[: min(3, len(self.specialist_agents))]
 
     def _latest_handoffs_by_agent(self) -> Dict[str, AgentHandoff]:
         """Return the latest hand-off for each specialist by resolved name."""

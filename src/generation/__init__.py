@@ -18,6 +18,7 @@ from src.generation.user_request import (
 
 __all__ = [
     "Audience",
+    "ContentSynthesizer",
     "DateRangePreference",
     "DeliveryMode",
     "DeliveryPreference",
@@ -31,3 +32,12 @@ __all__ = [
     "parse_user_request",
     "parse_user_request_tool",
 ]
+
+
+def __getattr__(name):
+    """Lazily expose synthesis classes without creating import cycles."""
+    if name == "ContentSynthesizer":
+        from src.generation.synthesizer import ContentSynthesizer
+
+        return ContentSynthesizer
+    raise AttributeError(name)

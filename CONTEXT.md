@@ -524,7 +524,7 @@ The plan addresses all requirements from the project description including the m
 
 **Test**: Julius formats an approved summary, validates it against the user's preferences, saves it to `outputs/`, and optionally passes it to the email workflow.
 
-### Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
+### Step 6.6: 
 **Objective**: Provide a simple web app where the user can interact with Julius, refine the requested summary conversationally, preview drafts, and finalize the desired result.
 
 **Tasks**:
@@ -637,10 +637,10 @@ The plan addresses all requirements from the project description including the m
   6. Extract topics and select representatives
   7. Analyze selected papers
   8. Generate one-pager
-  9. Send email
+  9. Save one-pager to data/one_pager folder
 - Add progress logging and error recovery
 
-**Test**: Run end-to-end with default settings (last week, all agents), verify complete one-pager is generated and sent
+**Test**: Run end-to-end with default settings (last week, all agents), verify complete one-pager is generated and saved
 
 ### Step 8.2: Error Handling & Edge Cases
 **Objective**: Make system robust

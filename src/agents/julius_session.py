@@ -75,10 +75,14 @@ class JuliusSession:
         julius: Optional[JuliusAgent] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
         reference_date: Optional[Any] = None,
+        selected_papers: Optional[List[Dict[str, Any]]] = None,
+        analyses: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         self.julius = julius or JuliusAgent()
         self.progress_callback = progress_callback
         self.reference_date = reference_date
+        self.selected_papers = selected_papers or []
+        self.analyses = analyses or []
         self.state = JuliusSessionState.INTAKE
         self.conversation_history: List[Dict[str, Any]] = []
         self.current_request: Optional[SummaryRequest] = None
@@ -211,14 +215,20 @@ class JuliusSession:
         self.emit_progress("Preparing the paper search scope.")
         self.emit_progress("Modeling candidate topics.")
         self.emit_progress("Preparing specialist review tasks.")
+        draft_result = self.julius.generate_first_draft_tool(
+            summary_request=self.current_request,
+            selected_papers=self.selected_papers,
+            analyses=self.analyses,
+            previous_feedback=self.user_feedback,
+        )
         self.emit_progress("Compiling the draft preview.")
 
-        draft = self._create_draft_stub()
+        draft = draft_result["draft"]
         self.drafts.append(draft)
         self.state = JuliusSessionState.AWAITING_REVIEW
         return self._build_response(
-            "Draft preview is ready for review.",
-            actions_taken=["generated_draft_preview"],
+            "First draft is ready for review.",
+            actions_taken=["generated_first_draft", "coordinated_specialist_handoffs"],
             draft_preview=draft["content"],
         )
 
@@ -241,7 +251,14 @@ class JuliusSession:
 
         if self.drafts:
             self.emit_progress("Applying the requested revision.")
-            draft = self._create_draft_stub(change_summary=message)
+            draft = self.julius.synthesizer.synthesize_draft(
+                summary_request=self.current_request,
+                selected_papers=self.selected_papers,
+                analyses=self.analyses,
+                previous_feedback=self.user_feedback,
+                draft_version=len(self.drafts) + 1,
+            )
+            draft["change_summary"] = message
             self.drafts.append(draft)
             self.state = JuliusSessionState.AWAITING_REVIEW
             return self._build_response(
@@ -300,47 +317,6 @@ class JuliusSession:
             actions_taken=["finalized_draft", action],
             draft_preview=self.drafts[-1]["content"],
         )
-
-    def _create_draft_stub(self, change_summary: Optional[str] = None) -> Dict[str, Any]:
-        """Build a deterministic draft preview and provenance record."""
-        assert self.current_request is not None
-        request = self.current_request
-        version = len(self.drafts) + 1
-        topic = request.topic_query or "all assigned research areas"
-        categories = ", ".join(request.must_include_categories) or "Julius-selected categories"
-        excluded = ", ".join(request.exclude_categories) or "none"
-        date_range = request.date_range
-
-        content_parts = [
-            f"# Draft v{version}: {topic}",
-            f"Date range: {date_range.start_date} to {date_range.end_date} ({date_range.label}).",
-            f"Audience: {request.audience.value}; depth: {request.depth.value}; tone: {request.tone.value}.",
-            f"Format: {request.format.value}; limits: {request.max_topics} topics, {request.max_papers} papers.",
-            f"Categories: include {categories}; exclude {excluded}.",
-            "This is a session preview. Full paper fetching, specialist analysis, and final synthesis are implemented in later phase-6 steps.",
-        ]
-        if change_summary:
-            content_parts.append(f"Revision note: {change_summary}")
-
-        return {
-            "version": version,
-            "content": "\n".join(content_parts),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "summary_request": request.model_dump(mode="json"),
-            "provenance": {
-                "selected_topics": [topic],
-                "selected_papers": [],
-                "inclusion_reason": (
-                    "The preview follows the user's current topic, date range, audience, "
-                    "format, category filters, and depth preferences."
-                ),
-                "omissions": [
-                    "Representative paper selection is deferred to step 6.3.",
-                    "Final file/email delivery is deferred to later output steps.",
-                ],
-            },
-            "change_summary": change_summary,
-        }
 
     def _request_acknowledgement(self, next_questions: List[str]) -> str:
         """Summarize the interpreted request in one concise message."""

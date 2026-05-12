@@ -172,13 +172,14 @@ arxiv-editor/
 **Phase 6: Interactive Julius Summary Generation**
 - ✅ Step 6.1: User Request Intake and Preference Model
 - ✅ Step 6.2: Julius Conversation Session
-- Step 6.3: Multi-Agent Draft Generation with Hand-offs
+- ✅ Step 6.3: Multi-Agent Draft Generation with Hand-offs
 - Step 6.4: User-Guided Revision Loop
 - Step 6.5: Formatting, Quality Assurance, and Final Output
 - Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
 
 **Phase 7-10**: See CONTEXT.md for full implementation plan
-
+## Ignore 
+Phases 7 and 10 must be ignored. They are here for information purpose
 ## Testing
 
 Run the test suite:
@@ -280,7 +281,29 @@ print(response["draft_preview"]) # deterministic preview for review
 
 The session supports intake, clarification, planning, generation, review,
 revision, draft-question answering, and finalization states. Draft previews are
-lightweight placeholders until step 6.3 adds real multi-agent draft generation.
+generated through Julius's first-draft synthesis workflow.
+
+## Draft Synthesis
+
+Step 6.3 adds synthesis tools in `src/agents/tools/synthesis_tools.py` and
+`ContentSynthesizer` in `src/generation/synthesizer.py`. Julius can now select
+specialists from the request topic/categories, delegate review tasks, collect
+handoff callbacks, synthesize the first draft, and attach provenance for
+selected topics, papers, agents, confidence notes, and review warnings.
+
+```python
+from src.agents import JuliusAgent
+from src.generation import SummaryRequest
+
+julius = JuliusAgent()
+result = julius.generate_first_draft_tool(
+    summary_request=SummaryRequest(topic_query="LLM agents", must_include_categories=["cs.AI"]),
+    selected_papers=[{"title": "Agent Planning Benchmarks", "summary": "We study LLM agents."}],
+)
+
+print(result["draft"]["content"])
+print(result["draft"]["provenance"]["agent_callbacks"])
+```
 
 ## Text Embeddings
 
