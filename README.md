@@ -99,6 +99,11 @@ python main.py test
 python main.py chat
 ```
 
+**Run the Streamlit app:**
+```bash
+streamlit run app.py
+```
+
 ### CLI Commands
 
 - `generate` - Generate a research one-pager
@@ -175,7 +180,7 @@ arxiv-editor/
 - ✅ Step 6.3: Multi-Agent Draft Generation with Hand-offs
 - ✅ Step 6.4: User-Guided Revision Loop
 - ✅ Step 6.5: Formatting, Quality Assurance, and Final Output
-- Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
+- ✅ Step 6.6: Streamlit App for End-to-End Interactive Summary Workflow
 
 **Phase 7-10**: See CONTEXT.md for full implementation plan
 ## Ignore 
@@ -336,6 +341,36 @@ report = validate_quality_tool(
     draft["summary_request"],
     source_papers=[{"title": "Agent Planning Benchmarks", "arxiv_id": "2605.00001"}],
 )
+```
+
+## Streamlit App
+
+Step 6.6 adds `app.py`, `src/ui/streamlit_app.py`, and
+`InteractiveSummaryWorkflow` in `src/generation/interactive_workflow.py`.
+Run locally with:
+
+```bash
+streamlit run app.py
+```
+
+The app has a sidebar for topic, date range, audience, depth, tone, format,
+category filters, and max topic/paper limits. The main view has Julius chat,
+explicit buttons for applying preferences, generating, validating, and
+finalizing, plus tabs for preview, metadata, quality, and revision history.
+
+Example transcript:
+
+```text
+User: Give me a mixed audience summary of LLM agents
+Julius: I interpreted the request as LLM agents. Say 'generate draft' when ready.
+User: Generate draft
+Julius: First draft is ready for review.
+User: make it shorter
+Julius: I revised the draft.
+User: why did you choose this paper?
+Julius: The draft follows the user's current topic, date range, audience, depth, format, category filters, and selected specialist callbacks.
+User: finalize this
+Julius: Finalized and saved the current draft to outputs/...
 ```
 
 ## Text Embeddings

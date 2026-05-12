@@ -55,3 +55,6 @@ python-json-logger==2.0.7
 # CLI
 click==8.1.7
 rich==13.7.0
+
+# Web UI
+streamlit==1.52.1

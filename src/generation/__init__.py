@@ -35,6 +35,7 @@ __all__ = [
     "DeliveryPreference",
     "DocumentFormatter",
     "DocumentValidator",
+    "InteractiveSummaryWorkflow",
     "Depth",
     "RequestParseResult",
     "RevisionOperation",
@@ -44,6 +45,7 @@ __all__ = [
     "SummaryRequest",
     "SummaryRequestSession",
     "Tone",
+    "WorkflowResult",
     "clarify_request_tool",
     "mark_draft_final_tool",
     "parse_revision_request_tool",
@@ -60,4 +62,14 @@ def __getattr__(name):
         from src.generation.synthesizer import ContentSynthesizer
 
         return ContentSynthesizer
+    if name in {"InteractiveSummaryWorkflow", "WorkflowResult"}:
+        from src.generation.interactive_workflow import (
+            InteractiveSummaryWorkflow,
+            WorkflowResult,
+        )
+
+        return {
+            "InteractiveSummaryWorkflow": InteractiveSummaryWorkflow,
+            "WorkflowResult": WorkflowResult,
+        }[name]
     raise AttributeError(name)
