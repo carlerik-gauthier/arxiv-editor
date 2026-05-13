@@ -122,7 +122,7 @@ class TopicModeler:
             raise ValueError("representative_papers_per_topic must be at least 1")
 
         records = normalize_papers(papers)
-        documents = [record.text for record in records]
+        documents = [record.summary for record in records]
         progress = [
             {"stage": "normalize_papers", "status": "completed", "paper_count": len(records)}
         ]
@@ -171,15 +171,25 @@ class TopicModeler:
         topic_results: List[Dict[str, Any]] = []
         for topic_id in sorted(topic_id for topic_id in grouped_records if topic_id != -1):
             keywords = self._extract_keywords(topic_id, grouped_records[topic_id])
+            representation = self._extract_topic_representation(
+                topic_id,
+                grouped_records[topic_id],
+            )
             representative_papers = _select_representative_papers(
                 grouped_records[topic_id],
                 limit=representative_papers_per_topic,
             )
-            title = self.title_generator(keywords, representative_papers)
+            title = self._generate_title_from_representation(
+                representation,
+                keywords,
+                representative_papers,
+            )
             topic_result = {
                 "topic_id": topic_id,
                 "title": title,
                 "keywords": keywords,
+                "representation": representation,
+                "representation_text": _topic_representation_text(representation),
                 "paper_count": len(grouped_records[topic_id]),
                 "representative_papers": representative_papers,
             }
@@ -538,6 +548,60 @@ class TopicModeler:
                 return [str(word) for word, _score in topic_words[:limit]]
         return _keywords_from_papers(papers, limit=limit)
 
+    def _extract_topic_representation(
+        self,
+        topic_id: int,
+        papers: Sequence[Dict[str, Any]],
+        limit: int = 10,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Return BERTopic's computed topic representation as structured data."""
+        if self._topic_model is not None and hasattr(self._topic_model, "get_topic"):
+            try:
+                full_representation = self._topic_model.get_topic(topic_id, full=True)
+            except TypeError:
+                full_representation = None
+
+            if isinstance(full_representation, dict) and full_representation:
+                return {
+                    str(aspect): _normalize_representation_items(items, limit=limit)
+                    for aspect, items in full_representation.items()
+                    if items
+                }
+
+            topic_words = self._topic_model.get_topic(topic_id)
+            if topic_words:
+                return {
+                    "Main": _normalize_representation_items(topic_words, limit=limit)
+                }
+
+        return {
+            "Fallback": [
+                {"term": keyword, "score": None}
+                for keyword in _keywords_from_papers(papers, limit=limit)
+            ]
+        }
+
+    def _generate_title_from_representation(
+        self,
+        representation: Dict[str, List[Dict[str, Any]]],
+        keywords: List[str],
+        representative_papers: List[Dict[str, Any]],
+    ) -> str:
+        """Generate a concise topic title from BERTopic representation."""
+        representation_text = _topic_representation_text(representation)
+        if self.use_openai_representation:
+            title = _generate_openai_topic_title(
+                client=self.openai_client,
+                api_key=self.openai_api_key,
+                model=self.representation_model_name,
+                representation_text=representation_text,
+                representative_papers=representative_papers,
+            )
+            if title:
+                return title
+
+        return _concise_topic_title(self.title_generator(keywords, representative_papers))
+
 
 def normalize_papers(papers: Iterable[Any]) -> List[PaperTopicRecord]:
     """
@@ -606,6 +670,141 @@ def generate_topic_title(
         common_words = [word for word, _count in Counter(title_words).most_common(3)]
         return " / ".join(word.title() for word in common_words)
     return "Emerging Research Theme"
+
+
+def _normalize_representation_items(items: Any, limit: int) -> List[Dict[str, Any]]:
+    """Normalize BERTopic representation tuples, strings, or dicts."""
+    normalized: List[Dict[str, Any]] = []
+    iterable = [items] if isinstance(items, str) else list(items)
+    for item in iterable[:limit]:
+        if isinstance(item, dict):
+            term = item.get("term") or item.get("word") or item.get("label") or item.get("text")
+            score = item.get("score") or item.get("weight")
+        elif isinstance(item, (list, tuple)) and item:
+            term = item[0]
+            score = item[1] if len(item) > 1 else None
+        else:
+            term = item
+            score = None
+
+        if term is None:
+            continue
+        normalized.append({"term": str(term), "score": _json_safe_score(score)})
+    return normalized
+
+
+def _json_safe_score(score: Any) -> Optional[float]:
+    """Return scores as floats when possible, otherwise None."""
+    if score is None:
+        return None
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value):
+        return None
+    return value
+
+
+def _topic_representation_text(representation: Dict[str, List[Dict[str, Any]]]) -> str:
+    """Flatten structured topic representation into compact prompt text."""
+    parts = []
+    for aspect, items in representation.items():
+        terms = [item["term"] for item in items if item.get("term")]
+        if terms:
+            parts.append(f"{aspect}: {', '.join(terms)}")
+    return "; ".join(parts)
+
+
+def _generate_openai_topic_title(
+    client: Optional[Any],
+    api_key: Optional[str],
+    model: str,
+    representation_text: str,
+    representative_papers: Sequence[Dict[str, Any]],
+) -> Optional[str]:
+    """Ask OpenAI for a concise title from BERTopic's representation."""
+    if not representation_text:
+        return None
+
+    llm_client = client
+    if llm_client is None:
+        try:
+            llm_client = _create_openai_client(api_key)
+        except (ImportError, ValueError):
+            return None
+
+    paper_titles = [
+        str(paper.get("title", ""))
+        for paper in representative_papers[:5]
+        if paper.get("title")
+    ]
+    prompt = (
+        "Create a concise research topic title from this BERTopic representation.\n"
+        "Use at most six words. Return only the title.\n"
+        f"Topic representation: {representation_text}\n"
+        f"Representative papers: {'; '.join(paper_titles)}"
+    )
+    try:
+        response = _call_openai_title_client(llm_client, model, prompt)
+    except Exception:
+        return None
+    return _concise_topic_title(_extract_text_response(response))
+
+
+def _call_openai_title_client(client: Any, model: str, prompt: str) -> Any:
+    """Call common OpenAI-compatible client shapes."""
+    responses_api = getattr(client, "responses", None)
+    create_method = getattr(responses_api, "create", None)
+    if callable(create_method):
+        return create_method(model=model, input=prompt, temperature=0)
+
+    chat_api = getattr(client, "chat", None)
+    completions_api = getattr(chat_api, "completions", None)
+    create_method = getattr(completions_api, "create", None)
+    if callable(create_method):
+        return create_method(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+
+    if callable(client):
+        return client(prompt)
+    raise TypeError("OpenAI client must expose responses.create or chat.completions.create")
+
+
+def _extract_text_response(response: Any) -> str:
+    """Extract text from common OpenAI response shapes."""
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        return str(response.get("output_text") or response.get("content") or response.get("text") or "")
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str):
+        return output_text
+    choices = getattr(response, "choices", None)
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        if isinstance(content, str):
+            return content
+    return str(response)
+
+
+def _concise_topic_title(title: str, max_words: int = 6) -> str:
+    """Normalize model output to a concise title."""
+    cleaned = str(title or "").strip().strip('"').strip("'")
+    cleaned = re.sub(r"^\s*(topic\s+title|title)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = " ".join(cleaned.splitlines()[0].split()) if cleaned else ""
+    if not cleaned:
+        return "Emerging Research Theme"
+    words = cleaned.split()
+    if len(words) > max_words:
+        cleaned = " ".join(words[:max_words])
+    return cleaned.rstrip(" .,:;")
 
 
 def _create_openai_client(openai_api_key: Optional[str] = None) -> Any:

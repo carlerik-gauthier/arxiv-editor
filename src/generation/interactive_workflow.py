@@ -9,6 +9,7 @@ touching the Streamlit layer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agents.julius_session import JuliusSession
@@ -149,17 +150,135 @@ class InteractiveSummaryWorkflow:
             ).to_dict()
 
     def _refresh_data_if_configured(self) -> None:
-        """Run injected data hooks before draft generation."""
+        """Ensure enough papers are available before draft generation."""
         if not self.session.current_request:
             return
         request = self.session.current_request
-        if self.fetch_papers_fn:
-            papers = self.fetch_papers_fn(request)
-            if not papers:
-                raise ValueError("No papers were returned for the current scope.")
-            self.session.selected_papers = papers
+        self._ensure_papers_available(request)
         if self.analyze_papers_fn and self.session.selected_papers:
             self.session.analyses = self.analyze_papers_fn(self.session.selected_papers)
+
+    def _ensure_papers_available(self, request: SummaryRequest) -> None:
+        """Ask selected agents to check paper availability and fetch when needed."""
+        agent_names = self._selected_agent_names(request)
+        required_count = 1
+        available_count = self._matching_paper_count(request)
+        threshold_met = self._check_agent_thresholds(
+            agent_names=agent_names,
+            paper_count=available_count,
+            min_threshold=required_count,
+        )
+        if threshold_met:
+            return
+
+        papers = self._fetch_papers(request, agent_names, required_count)
+        if not papers:
+            raise ValueError("No papers were returned for the current scope.")
+        self.session.selected_papers = papers
+
+    def _check_agent_thresholds(
+        self,
+        agent_names: List[str],
+        paper_count: int,
+        min_threshold: int,
+    ) -> bool:
+        """Record data availability checks through the selected specialist agents."""
+        if not agent_names:
+            return paper_count >= min_threshold
+
+        threshold_met = False
+        for agent_name in agent_names:
+            agent = self.session.julius.specialist_agents[agent_name]
+            result = agent.execute_tool(
+                "check_threshold_tool",
+                {"paper_count": paper_count, "min_threshold": min_threshold},
+            )
+            if result.success and result.result.get("threshold_met"):
+                threshold_met = True
+        return threshold_met
+
+    def _fetch_papers(
+        self,
+        request: SummaryRequest,
+        agent_names: List[str],
+        min_count: int,
+    ) -> List[Dict[str, Any]]:
+        """Fetch papers with an injected fetcher or the selected agents' fetch tool."""
+        if self.fetch_papers_fn:
+            return self.fetch_papers_fn(request)
+
+        start_date, end_date = self._date_bounds(request)
+        fetched: List[Dict[str, Any]] = []
+        seen_ids = set()
+        for agent_name in agent_names:
+            agent = self.session.julius.specialist_agents[agent_name]
+            categories = self._categories_for_agent(request, agent_name)
+            result = agent.execute_tool(
+                "fetch_papers_tool",
+                {
+                    "categories": categories,
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "max_results": max(request.max_papers, min_count),
+                    "min_count": min_count,
+                },
+            )
+            if not result.success:
+                raise ValueError(result.error or f"{agent_name} could not fetch papers.")
+            for paper in result.result.get("papers", []):
+                paper_id = paper.get("arxiv_id") or paper.get("id") or paper.get("title")
+                if paper_id in seen_ids:
+                    continue
+                seen_ids.add(paper_id)
+                fetched.append(paper)
+        return fetched
+
+    def _selected_agent_names(self, request: SummaryRequest) -> List[str]:
+        """Use Julius's request routing to pick agents responsible for data checks."""
+        return self.session.julius._select_agents_for_summary_request(request)
+
+    def _categories_for_agent(self, request: SummaryRequest, agent_name: str) -> List[str]:
+        """Prefer explicit category filters, otherwise use the specialist's categories."""
+        agent_categories = self.session.julius.specialist_agents[agent_name].categories
+        if request.must_include_categories:
+            matching = [
+                category
+                for category in request.must_include_categories
+                if category in agent_categories
+            ]
+            return matching or list(request.must_include_categories)
+        return list(agent_categories)
+
+    def _matching_paper_count(self, request: SummaryRequest) -> int:
+        """Count available papers that satisfy explicit category filters."""
+        if not request.must_include_categories:
+            return len(self.session.selected_papers)
+        included = set(request.must_include_categories)
+        count = 0
+        for paper in self.session.selected_papers:
+            paper_categories = set(paper.get("categories") or [])
+            if included.intersection(paper_categories):
+                count += 1
+        return count
+
+    def _date_bounds(self, request: SummaryRequest) -> tuple[date, date]:
+        """Resolve concrete dates for ArXiv fetching."""
+        end = request.date_range.end_date or self._reference_date()
+        start = request.date_range.start_date or (end - timedelta(days=7))
+        return start, end
+
+    def _reference_date(self) -> date:
+        """Return the workflow's deterministic reference date when configured."""
+        value = self.session.reference_date
+        if value is None:
+            return date.today()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            return date.fromisoformat(value[:10])
+        if hasattr(value, "date"):
+            return value.date()
+        return date.today()
 
     def _current_request_dict(self) -> Optional[Dict[str, Any]]:
         """Return the current request as a dict when present."""

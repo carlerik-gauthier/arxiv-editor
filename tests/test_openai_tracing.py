@@ -15,6 +15,22 @@ class _TraceSpan:
         self.name = name
 
 
+class _SpanManager:
+    """Context manager stand-in for SDK spans."""
+
+    def __init__(self, span, exit_error=None):
+        self.span = span
+        self.exit_error = exit_error
+
+    def __enter__(self):
+        return self.span
+
+    def __exit__(self, *_args):
+        if self.exit_error:
+            raise self.exit_error
+        return False
+
+
 def test_execute_tool_records_openai_function_span(monkeypatch):
     """BaseAgent tool execution opens a function span and attaches output."""
     events = []
@@ -91,3 +107,56 @@ def test_agent_handoff_records_openai_handoff_span(monkeypatch):
     assert ("handoff_start", "Julius", "Michel") in events
     assert ("output", "Julius->Michel", "Michel") in events
     assert ("handoff_end", "Julius", "Michel") in events
+
+
+def test_trace_generation_bounds_large_input_and_swallows_export_error(monkeypatch):
+    """Oversized generation payloads are truncated and tracing close failures do not leak."""
+    captured = {}
+
+    class FakeSdk:
+        def generation_span(self, **kwargs):
+            captured["input"] = kwargs["input"]
+            return _SpanManager(
+                _TraceSpan("generation"),
+                exit_error=RuntimeError("payload too large"),
+            )
+
+    monkeypatch.setattr(openai_tracing, "_load_tracing_sdk", lambda: FakeSdk())
+    monkeypatch.setenv("OPENAI_AGENTS_TRACE_MAX_CHARS", "1000")
+    payload = [{"role": "user", "content": "x" * 5000}]
+
+    with openai_tracing.trace_generation(payload, model="test-model") as span:
+        assert span.name == "generation"
+
+    assert len(captured["input"]) < 1200
+    assert "<truncated" in captured["input"]
+
+
+def test_trace_custom_bounds_data_before_opening_span(monkeypatch):
+    """Custom span data is serialized and bounded before it reaches the SDK."""
+    captured = {}
+
+    class FakeSdk:
+        def custom_span(self, name, data=None):
+            captured["name"] = name
+            captured["data"] = data
+            return _SpanManager(_TraceSpan(name))
+
+    monkeypatch.setattr(openai_tracing, "_load_tracing_sdk", lambda: FakeSdk())
+    monkeypatch.setenv("OPENAI_AGENTS_TRACE_MAX_CHARS", "1000")
+
+    with openai_tracing.trace_custom("large-data", {"paper": "x" * 5000}):
+        pass
+
+    assert captured["name"] == "large-data"
+    assert len(captured["data"]["paper"]) < 1200
+    assert "<truncated" in captured["data"]["paper"]
+
+
+def test_set_span_output_swallows_tracing_payload_errors():
+    """A tracing setter failure should not break the caller."""
+    class FailingOutputSpan:
+        def set_output(self, _output):
+            raise RuntimeError("payload too large")
+
+    openai_tracing.set_span_output(FailingOutputSpan(), {"content": "x" * 5000})

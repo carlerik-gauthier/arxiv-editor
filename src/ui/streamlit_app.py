@@ -14,18 +14,6 @@ from src.agents.tools import format_document_tool
 from src.generation.interactive_workflow import InteractiveSummaryWorkflow
 
 
-DEFAULT_CATEGORIES = [
-    "cs.AI",
-    "cs.CL",
-    "cs.LG",
-    "cs.CR",
-    "math.PR",
-    "math.AG",
-    "math.DG",
-    "stat.ML",
-]
-
-
 def ensure_workflow_state(
     session_state: MutableMapping[str, Any],
     workflow: InteractiveSummaryWorkflow | None = None,
@@ -49,6 +37,67 @@ def sync_session_state(session_state: MutableMapping[str, Any], workflow: Intera
     session_state["final_output_path"] = session.final_output_path
 
 
+def collect_agent_activity(workflow: InteractiveSummaryWorkflow) -> Dict[str, Any]:
+    """Return concise Julius coordination and specialist activity for the UI."""
+    julius = workflow.session.julius
+    tool_calls = [
+        {
+            "agent": "Julius",
+            "tool": call.get("tool_name"),
+            "success": call.get("success"),
+            "error": call.get("error"),
+            "completed_at": call.get("completed_at"),
+        }
+        for call in julius.state.get("tool_calls", [])
+    ]
+    handoffs = []
+    for handoff in julius.handoffs:
+        agent_name = handoff.to_agent
+        agent = julius.specialist_agents[agent_name]
+        response = (handoff.result or {}).get("response", {})
+        called_tools = _unique_names(
+            [
+                *_tool_names_from_agent_state(agent),
+                *_tool_names_from_response(response),
+            ]
+        )
+        available_tools = agent.list_tools()
+        displayed_tools = called_tools or available_tools
+        handoffs.append(
+            {
+                "agent": agent_name,
+                "status": handoff.status.value,
+                "task": handoff.handoff_context.task_description,
+                "tools": displayed_tools,
+                "tool_source": "called" if called_tools else "available",
+            }
+        )
+    return {"julius_tool_calls": tool_calls, "specialist_handoffs": handoffs}
+
+
+def collect_topic_discovery_debug(workflow: InteractiveSummaryWorkflow) -> Dict[str, Any]:
+    """Return raw discover_topics_tool outputs for the debug panel."""
+    debug_entries = []
+    for agent_name, agent in workflow.session.julius.specialist_agents.items():
+        for call in agent.state.get("tool_calls", []):
+            if call.get("tool_name") != "discover_topics_tool":
+                continue
+            debug_entries.append(
+                {
+                    "agent": agent_name,
+                    "success": call.get("success"),
+                    "completed_at": call.get("completed_at"),
+                    "error": call.get("error"),
+                    "content": call.get("result"),
+                }
+            )
+    return {
+        "tool": "discover_topics_tool",
+        "call_count": len(debug_entries),
+        "calls": debug_entries,
+    }
+
+
 def append_chat_result(
     session_state: MutableMapping[str, Any],
     user_message: str | None,
@@ -57,77 +106,174 @@ def append_chat_result(
     """Append a user turn and Julius response to chat history."""
     if user_message:
         session_state["messages"].append({"role": "user", "content": user_message})
-    session_state["messages"].append({"role": "assistant", "content": result["message"]})
+    session_state["messages"].append(
+        {"role": "assistant", "content": _format_assistant_message(result)}
+    )
     session_state["last_response"] = result
 
 
-def sidebar_preferences(st: Any) -> Dict[str, Any]:
-    """Render sidebar preference controls and return a preference dict."""
+def _format_assistant_message(result: Dict[str, Any]) -> str:
+    """Include Julius clarification questions directly in chat."""
+    message = str(result.get("message", ""))
+    questions = [question for question in result.get("next_questions", []) if question]
+    if not questions:
+        return message
+    return "\n\n".join(
+        [
+            message,
+            "Julius needs one clarification:"
+            if len(questions) == 1
+            else "Julius needs a few clarifications:",
+            "\n".join(f"- {question}" for question in questions),
+        ]
+    )
+
+
+def sidebar_output_preferences(st: Any) -> Dict[str, Any]:
+    """Render output-only preferences that complement the chat request."""
     with st.sidebar:
-        st.header("Preferences")
-        topic_query = st.text_input("Topic", value="")
-        quick_range = st.selectbox("Date range", ["last week", "last month", "last 14 days", "custom"])
-        audience = st.selectbox("Audience", ["mixed", "expert", "non_expert"])
-        depth = st.selectbox("Depth", ["standard", "brief", "deep"])
+        st.header("Output")
+        audience = st.selectbox("Audience", ["mixed audience", "expert", "non-expert"])
         tone = st.selectbox("Tone", ["editorial", "technical", "pedagogical", "executive"])
-        output_format = st.selectbox("Format", ["one_pager", "bullet_digest", "paper_rankings", "custom"])
-        include = st.multiselect("Include categories", DEFAULT_CATEGORIES)
-        exclude = st.multiselect("Exclude categories", DEFAULT_CATEGORIES)
-        max_topics = st.slider("Max topics", min_value=1, max_value=20, value=5)
-        max_papers = st.slider("Max papers", min_value=1, max_value=50, value=10)
+        output_format = st.selectbox(
+            "Format",
+            ["one-pager", "bullet digest", "paper rankings", "custom format"],
+        )
+        custom_structure = ""
+        if output_format == "custom format":
+            custom_structure = st.text_input("Custom structure", value="")
+        delivery = st.selectbox("Delivery", ["preview", "file", "email"])
+        email_recipient = ""
+        if delivery == "email":
+            email_recipient = st.text_input("Email recipient", value="")
     return {
-        "topic_query": topic_query or None,
-        "date_range": quick_range,
         "audience": audience,
-        "depth": depth,
         "tone": tone,
         "format": output_format,
-        "must_include_categories": include,
-        "exclude_categories": exclude,
-        "max_topics": max_topics,
-        "max_papers": max_papers,
+        "custom_structure": custom_structure,
+        "delivery": delivery,
+        "email_recipient": email_recipient,
     }
 
 
-def render_chat(st: Any, session_state: MutableMapping[str, Any], workflow: InteractiveSummaryWorkflow) -> None:
+def render_chat(
+    st: Any,
+    session_state: MutableMapping[str, Any],
+    workflow: InteractiveSummaryWorkflow,
+    output_preferences: Dict[str, Any] | None = None,
+) -> None:
     """Render chat history and route new chat input."""
     for message in session_state["messages"]:
         with st.chat_message(message["role"]):
             st.write(message["content"])
 
-    user_message = st.chat_input("Ask Julius for a research summary")
+    user_message = st.chat_input(
+        "Tell Julius the topic, date range, categories, and scope"
+    )
     if user_message:
-        result = workflow.handle_message(user_message)
-        append_chat_result(session_state, user_message, result)
-        sync_session_state(session_state, workflow)
+        process_chat_input(st, session_state, workflow, user_message, output_preferences)
         st.rerun()
+
+
+def process_chat_input(
+    st: Any,
+    session_state: MutableMapping[str, Any],
+    workflow: InteractiveSummaryWorkflow,
+    user_message: str,
+    output_preferences: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Handle one chat turn and auto-start draft generation when ready."""
+    julius_message = apply_output_preferences_to_message(
+        user_message,
+        output_preferences,
+        workflow,
+    )
+    result = workflow.handle_message(julius_message)
+    append_chat_result(session_state, user_message, result)
+    if should_auto_generate_draft(result, workflow):
+        with st.status("Julius is generating the draft", expanded=False):
+            result = workflow.generate_draft()
+        append_chat_result(session_state, None, result)
+    sync_session_state(session_state, workflow)
+    return result
+
+
+def apply_output_preferences_to_message(
+    user_message: str,
+    output_preferences: Dict[str, Any] | None,
+    workflow: InteractiveSummaryWorkflow,
+) -> str:
+    """Fold sidebar output preferences into intake messages for Julius."""
+    if not output_preferences or not should_apply_output_preferences(user_message, workflow):
+        return user_message
+    preference_text = output_preferences_message(output_preferences)
+    if not preference_text:
+        return user_message
+    return f"{user_message}. Output preferences: {preference_text}."
+
+
+def should_apply_output_preferences(user_message: str, workflow: InteractiveSummaryWorkflow) -> bool:
+    """Apply sidebar preferences to request intake, not draft commands or questions."""
+    lowered = user_message.lower().strip()
+    if lowered.endswith("?"):
+        return False
+    if any(keyword in lowered for keyword in ("why did", "why choose", "finalize", "finalise", "approve")):
+        return False
+    return not workflow.session.drafts
+
+
+def output_preferences_message(output_preferences: Dict[str, Any]) -> str:
+    """Build a compact natural-language preference clause for Julius."""
+    parts = [
+        str(output_preferences.get("audience") or "mixed audience"),
+        f"{output_preferences.get('tone') or 'editorial'} tone",
+        str(output_preferences.get("format") or "one-pager"),
+    ]
+    custom_structure = str(output_preferences.get("custom_structure") or "").strip()
+    if output_preferences.get("format") == "custom format" and custom_structure:
+        parts.append(custom_structure)
+
+    delivery = output_preferences.get("delivery") or "preview"
+    email_recipient = str(output_preferences.get("email_recipient") or "").strip()
+    if delivery == "email":
+        parts.append(f"email to {email_recipient}" if email_recipient else "email")
+    elif delivery == "file":
+        parts.append("save to file")
+    else:
+        parts.append("preview")
+    return ", ".join(parts)
+
+
+def should_auto_generate_draft(result: Dict[str, Any], workflow: InteractiveSummaryWorkflow) -> bool:
+    """Return true after complete intake, before any draft exists."""
+    return (
+        result.get("state") == "PLANNING"
+        and "updated_summary_request" in result.get("actions_taken", [])
+        and not result.get("next_questions")
+        and not result.get("recoverable")
+        and not workflow.session.drafts
+    )
 
 
 def render_action_buttons(
     st: Any,
     session_state: MutableMapping[str, Any],
     workflow: InteractiveSummaryWorkflow,
-    preferences: Dict[str, Any],
 ) -> None:
     """Render explicit action buttons for expensive workflow steps."""
-    col1, col2, col3, col4 = st.columns(4)
-    if col1.button("Apply preferences"):
-        result = workflow.apply_preferences(preferences)
-        append_chat_result(session_state, "Apply sidebar preferences", result)
-        sync_session_state(session_state, workflow)
-        st.rerun()
-    if col2.button("Generate draft"):
+    col1, col2, col3 = st.columns(3)
+    if col1.button("Generate draft"):
         with st.status("Generating draft", expanded=False):
             result = workflow.generate_draft()
         append_chat_result(session_state, "Generate draft", result)
         sync_session_state(session_state, workflow)
         st.rerun()
-    if col3.button("Validate"):
+    if col2.button("Validate"):
         result = workflow.validate_current_draft()
         append_chat_result(session_state, "Validate draft", result)
         sync_session_state(session_state, workflow)
         st.rerun()
-    if col4.button("Finalize"):
+    if col3.button("Finalize"):
         result = workflow.finalize()
         append_chat_result(session_state, "Finalize", result)
         sync_session_state(session_state, workflow)
@@ -138,7 +284,9 @@ def render_draft_review(st: Any, workflow: InteractiveSummaryWorkflow) -> None:
     """Render draft preview, metadata, quality, and revision history tabs."""
     session = workflow.session
     draft = session.drafts[-1] if session.drafts else None
-    preview, metadata, quality, history = st.tabs(["Preview", "Metadata", "Quality", "Revision history"])
+    preview, metadata, agents, topic_debug, quality, history = st.tabs(
+        ["Preview", "Metadata", "Agents", "Topic debug", "Quality", "Revision history"]
+    )
     with preview:
         st.markdown(draft.get("content", "No draft yet.") if draft else "No draft yet.")
         if draft and hasattr(st, "download_button"):
@@ -154,10 +302,100 @@ def render_draft_review(st: Any, workflow: InteractiveSummaryWorkflow) -> None:
                 "final_output_path": session.final_output_path,
             }
         )
+    with agents:
+        render_agent_activity(st, workflow)
+    with topic_debug:
+        render_topic_discovery_debug(st, workflow)
     with quality:
         st.json(session.validation_reports[-1] if session.validation_reports else {"status": "not validated"})
     with history:
         st.json(session.draft_versions or {"status": "no draft versions"})
+
+
+def render_agent_activity(st: Any, workflow: InteractiveSummaryWorkflow) -> None:
+    """Render specialists called by Julius and the tools involved."""
+    activity = collect_agent_activity(workflow)
+    if activity["specialist_handoffs"]:
+        st.subheader("Agents Called")
+        st.dataframe(
+            [
+                {
+                    "Agent": handoff["agent"],
+                    "Status": handoff["status"],
+                    "Tools": ", ".join(handoff["tools"]),
+                    "Tool source": handoff["tool_source"],
+                    "Task": handoff["task"],
+                }
+                for handoff in activity["specialist_handoffs"]
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No specialist agents have been called yet.")
+
+    if activity["julius_tool_calls"]:
+        st.subheader("Julius Tools")
+        st.dataframe(
+            [
+                {
+                    "Agent": call["agent"],
+                    "Tool": call["tool"],
+                    "Success": call["success"],
+                    "Error": call["error"],
+                    "Completed": call["completed_at"],
+                }
+                for call in activity["julius_tool_calls"]
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No Julius coordination tools have run yet.")
+
+
+def render_topic_discovery_debug(st: Any, workflow: InteractiveSummaryWorkflow) -> None:
+    """Render raw topic discovery tool payloads for debugging."""
+    debug_payload = collect_topic_discovery_debug(workflow)
+    if debug_payload["call_count"] == 0:
+        st.write("No topic discovery tool output has been recorded yet.")
+        return
+    st.json(debug_payload)
+
+
+def _tool_names_from_response(response: Any) -> list[str]:
+    """Normalize tool call names from BaseAgent response payloads."""
+    if not isinstance(response, dict):
+        return []
+    tool_calls = response.get("tool_calls") or []
+    names = []
+    for tool_call in tool_calls:
+        if isinstance(tool_call, dict):
+            name = tool_call.get("name") or tool_call.get("tool") or tool_call.get("tool_name")
+        else:
+            name = getattr(tool_call, "name", None) or getattr(tool_call, "tool_name", None)
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _tool_names_from_agent_state(agent: Any) -> list[str]:
+    """Return tool names already executed by a specialist agent."""
+    return [
+        str(call.get("tool_name"))
+        for call in agent.state.get("tool_calls", [])
+        if call.get("tool_name")
+    ]
+
+
+def _unique_names(names: list[str]) -> list[str]:
+    """Deduplicate names while preserving their first-seen order."""
+    unique = []
+    seen = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append(name)
+    return unique
 
 
 def run_app(st_module: Any | None = None) -> None:
@@ -172,9 +410,9 @@ def run_app(st_module: Any | None = None) -> None:
     st.set_page_config(page_title="Julius ArXiv Editor", layout="wide")
     st.title("Julius ArXiv Editor")
     workflow = ensure_workflow_state(st.session_state)
-    preferences = sidebar_preferences(st)
-    render_action_buttons(st, st.session_state, workflow, preferences)
-    render_chat(st, st.session_state, workflow)
+    output_preferences = sidebar_output_preferences(st)
+    render_action_buttons(st, st.session_state, workflow)
+    render_chat(st, st.session_state, workflow, output_preferences)
     render_draft_review(st, workflow)
 
 

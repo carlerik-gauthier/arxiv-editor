@@ -128,10 +128,17 @@ class AgentHandoff:
                 pass
 
             try:
-                response = to_agent.respond(
-                    _format_handoff_prompt(from_agent.name, context),
-                    auto_execute_tools=False,
-                )
+                if (
+                    hasattr(to_agent, "can_handle_research_handoff")
+                    and to_agent.can_handle_research_handoff(context)
+                    and hasattr(to_agent, "handle_research_handoff")
+                ):
+                    response = to_agent.handle_research_handoff(context)
+                else:
+                    response = to_agent.respond(
+                        _format_handoff_prompt(from_agent.name, context),
+                        auto_execute_tools=True,
+                    )
                 handoff.result = {
                     "agent": to_agent.name,
                     "categories": list(getattr(to_agent, "categories", [])),
@@ -363,7 +370,10 @@ class JuliusAgent(BaseAgent):
                 {
                     "agent_name": "Michel",
                     "task_description": "Review the draft plan for accessible explanations and terminology.",
-                    "constraints": {"summary_request": request.model_dump(mode="json")},
+                    "constraints": {
+                        "summary_request": request.model_dump(mode="json"),
+                        "selected_papers": selected_papers or [],
+                    },
                 },
             )
             selected_agents = [*selected_agents, "Michel"]

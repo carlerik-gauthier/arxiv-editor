@@ -62,11 +62,11 @@ def trace_workflow(name: str, metadata: Optional[Dict[str, Any]] = None) -> Iter
             yield span
         return
 
-    if sdk.get_current_trace() is None:
-        with sdk.trace(name, metadata=_trace_metadata(metadata)) as trace:
+    if _get_current_trace(sdk) is None:
+        with _safe_sdk_span(sdk.trace, name, metadata=_trace_metadata(metadata)) as trace:
             yield trace
     else:
-        with sdk.custom_span(name, data=_trace_data(metadata)) as span:
+        with _safe_sdk_span(sdk.custom_span, name, data=_trace_data(metadata)) as span:
             yield span
 
 
@@ -83,7 +83,7 @@ def trace_agent(
             yield span
         return
 
-    with sdk.agent_span(name=name, tools=tools, handoffs=handoffs) as span:
+    with _safe_sdk_span(sdk.agent_span, name=name, tools=tools, handoffs=handoffs) as span:
         yield span
 
 
@@ -98,7 +98,7 @@ def trace_tool_call(tool_name: str, parameters: Optional[Dict[str, Any]] = None)
 
     trace_input = serialize_for_trace(parameters) if include_sensitive_trace_data() else None
     with _ensure_trace(sdk, f"Tool call: {tool_name}", {"tool_name": tool_name}):
-        with sdk.function_span(name=tool_name, input=trace_input) as span:
+        with _safe_sdk_span(sdk.function_span, name=tool_name, input=trace_input) as span:
             yield span
 
 
@@ -116,7 +116,7 @@ def trace_handoff(from_agent: str, to_agent: str) -> Iterator[Any]:
         f"Handoff: {from_agent} to {to_agent}",
         {"from_agent": from_agent, "to_agent": to_agent},
     ):
-        with sdk.handoff_span(from_agent=from_agent, to_agent=to_agent) as span:
+        with _safe_sdk_span(sdk.handoff_span, from_agent=from_agent, to_agent=to_agent) as span:
             yield span
 
 
@@ -129,7 +129,7 @@ def trace_custom(name: str, data: Optional[Dict[str, Any]] = None) -> Iterator[A
             yield span
         return
 
-    with sdk.custom_span(name, data=_trace_data(data)) as span:
+    with _safe_sdk_span(sdk.custom_span, name, data=_trace_data(data)) as span:
         yield span
 
 
@@ -145,8 +145,8 @@ def trace_generation(
             yield span
         return
 
-    trace_input = messages if include_sensitive_trace_data() else None
-    with sdk.generation_span(input=trace_input, model=model) as span:
+    trace_input = serialize_for_trace(messages) if include_sensitive_trace_data() else None
+    with _safe_sdk_span(sdk.generation_span, input=trace_input, model=model) as span:
         yield span
 
 
@@ -155,15 +155,18 @@ def set_span_output(span: Any, output: Any) -> None:
     if span is None or not include_sensitive_trace_data():
         return
 
-    span_data = getattr(span, "span_data", None)
-    if _is_generation_span_data(span_data):
-        span_data.output = _generation_output(output)
-    elif hasattr(span, "set_output"):
-        span.set_output(serialize_for_trace(output))
-    elif hasattr(span_data, "output"):
-        span_data.output = serialize_for_trace(output)
-    elif hasattr(span_data, "data") and isinstance(span_data.data, dict):
-        span_data.data["output"] = serialize_for_trace(output)
+    try:
+        span_data = getattr(span, "span_data", None)
+        if _is_generation_span_data(span_data):
+            span_data.output = _generation_output(output)
+        elif hasattr(span, "set_output"):
+            span.set_output(serialize_for_trace(output))
+        elif hasattr(span_data, "output"):
+            span_data.output = serialize_for_trace(output)
+        elif hasattr(span_data, "data") and isinstance(span_data.data, dict):
+            span_data.data["output"] = serialize_for_trace(output)
+    except Exception:
+        logger.exception("OpenAI tracing failed while attaching span output; continuing.")
 
 
 def set_span_error(span: Any, exc: Exception, data: Optional[Dict[str, Any]] = None) -> None:
@@ -174,15 +177,18 @@ def set_span_error(span: Any, exc: Exception, data: Optional[Dict[str, Any]] = N
     include_sensitive = include_sensitive_trace_data()
     error_data: Dict[str, Any] = {"error_type": type(exc).__name__}
     if include_sensitive:
-        error_data["details"] = str(exc)
+        error_data["details"] = serialize_for_trace(str(exc))
         if data:
             error_data.update(_trace_data(data))
-    span.set_error(
-        {
-            "message": str(exc) if include_sensitive else type(exc).__name__,
-            "data": error_data,
-        }
-    )
+    try:
+        span.set_error(
+            {
+                "message": serialize_for_trace(str(exc)) if include_sensitive else type(exc).__name__,
+                "data": error_data,
+            }
+        )
+    except Exception:
+        logger.exception("OpenAI tracing failed while attaching span error; continuing.")
 
 
 def serialize_for_trace(value: Any) -> str:
@@ -199,9 +205,6 @@ def serialize_for_trace(value: Any) -> str:
 
 
 def _generation_output(output: Any) -> list[Dict[str, Any]]:
-    if isinstance(output, list) and all(isinstance(item, dict) for item in output):
-        return output
-
     return [{"role": "assistant", "content": serialize_for_trace(output)}]
 
 
@@ -213,8 +216,15 @@ def _trace_data(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not data:
         return {}
     if include_sensitive_trace_data():
-        return dict(data)
-    return {key: value for key, value in data.items() if key.startswith("trace_")}
+        return {
+            str(key): serialize_for_trace(value)
+            for key, value in data.items()
+        }
+    return {
+        str(key): serialize_for_trace(value)
+        for key, value in data.items()
+        if str(key).startswith("trace_")
+    }
 
 
 def _max_trace_chars() -> int:
@@ -233,11 +243,54 @@ def _ensure_trace(
     name: str,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Iterator[None]:
-    if sdk.get_current_trace() is None:
-        with sdk.trace(name, metadata=_trace_metadata(metadata)):
+    if _get_current_trace(sdk) is None:
+        with _safe_sdk_span(sdk.trace, name, metadata=_trace_metadata(metadata)):
             yield
     else:
         yield
+
+
+def _get_current_trace(sdk: _TracingSdk) -> Any:
+    """Read the current trace without letting tracing failures affect workflow."""
+    try:
+        return sdk.get_current_trace()
+    except Exception:
+        logger.exception("OpenAI tracing failed while reading current trace; continuing.")
+        return None
+
+
+@contextmanager
+def _safe_sdk_span(span_factory: Callable[..., Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+    """Run an SDK span as best-effort instrumentation only."""
+    try:
+        manager = span_factory(*args, **kwargs)
+    except Exception:
+        logger.exception("OpenAI tracing failed while creating span; continuing.")
+        with nullcontext() as span:
+            yield span
+        return
+
+    try:
+        span = manager.__enter__()
+    except Exception:
+        logger.exception("OpenAI tracing failed while entering span; continuing.")
+        with nullcontext() as span:
+            yield span
+        return
+
+    try:
+        yield span
+    except BaseException as body_exc:
+        try:
+            manager.__exit__(type(body_exc), body_exc, body_exc.__traceback__)
+        except Exception:
+            logger.exception("OpenAI tracing failed while closing span after error; continuing.")
+        raise
+    else:
+        try:
+            manager.__exit__(None, None, None)
+        except Exception:
+            logger.exception("OpenAI tracing failed while closing span; continuing.")
 
 
 def _trace_metadata(data: Optional[Dict[str, Any]]) -> Dict[str, str]:

@@ -29,6 +29,26 @@ def discover_topics_tool(
     topic titles, keywords, representative papers, cache metadata, and progress
     stages. A TopicModeler can be injected for tests or alternate backends.
     """
+    paper_list = [dict(paper) if isinstance(paper, dict) else paper for paper in papers]
+    if not paper_list:
+        return {
+            "topics": [],
+            "topic_count": 0,
+            "paper_count": 0,
+            "outlier_count": 0,
+            "status": "failed",
+            "error": "papers must contain at least one paper",
+            "progress": [
+                {
+                    "stage": "discover_topics",
+                    "status": "failed",
+                    "error": "papers must contain at least one paper",
+                }
+            ],
+        }
+    if len(paper_list) < max(3, min_topic_size):
+        return _small_corpus_topic_result(paper_list, representative_papers_per_topic)
+
     modeler = topic_modeler or TopicModeler(
         representation_model_name=representation_model_name,
         openai_api_key=openai_api_key,
@@ -61,6 +81,70 @@ def discover_topics_tool(
                 }
             ],
         }
+
+
+def _small_corpus_topic_result(
+    papers: Sequence[Any],
+    representative_papers_per_topic: int,
+) -> Dict[str, Any]:
+    """Return a deterministic topic result when BERTopic has too little data."""
+    normalized_papers = [paper if isinstance(paper, dict) else {"title": str(paper)} for paper in papers]
+    representative_papers = [
+        {
+            "arxiv_id": paper.get("arxiv_id"),
+            "title": paper.get("title", "Untitled paper"),
+            "summary": paper.get("summary") or paper.get("abstract", ""),
+            "categories": paper.get("categories", []),
+            "rank": index + 1,
+        }
+        for index, paper in enumerate(normalized_papers[:representative_papers_per_topic])
+    ]
+    keywords = _small_corpus_keywords(normalized_papers)
+    title = generate_topic_title(keywords, representative_papers)
+    return {
+        "topics": [
+            {
+                "topic_id": 0,
+                "title": title,
+                "keywords": keywords,
+                "paper_count": len(normalized_papers),
+                "representative_papers": representative_papers,
+            }
+        ] if normalized_papers else [],
+        "topic_count": 1 if normalized_papers else 0,
+        "paper_count": len(normalized_papers),
+        "outlier_count": 0,
+        "status": "completed",
+        "source": "small_corpus_fallback",
+        "progress": [
+            {
+                "stage": "small_corpus_topic_discovery",
+                "status": "completed",
+                "paper_count": len(normalized_papers),
+            }
+        ],
+    }
+
+
+def _small_corpus_keywords(papers: Sequence[Dict[str, Any]]) -> list[str]:
+    """Extract simple keywords from a tiny paper set."""
+    stopwords = {
+        "the", "and", "for", "with", "from", "that", "this", "paper", "study",
+        "studies", "introduce", "evaluate", "using", "into", "large", "model",
+        "models", "research",
+    }
+    counts: Dict[str, int] = {}
+    for paper in papers:
+        text = f"{paper.get('title', '')} {paper.get('summary') or paper.get('abstract', '')}"
+        for raw_token in text.lower().replace("-", " ").split():
+            token = "".join(character for character in raw_token if character.isalnum())
+            if len(token) < 4 or token in stopwords:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+    return [
+        token
+        for token, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    ]
 
 
 def generate_topic_title_tool(

@@ -63,6 +63,37 @@ class FakeTopicModel:
         return []
 
 
+class FakeRepresentedTopicModel(FakeTopicModel):
+    """BERTopic-compatible model exposing full topic representations."""
+
+    def get_topic(self, topic_id, full=False):
+        if full and topic_id == 0:
+            return {
+                "OpenAI": [("Agentic Planning Evaluation", 1.0)],
+                "Main": [("language", 0.8), ("agents", 0.7), ("planning", 0.6)],
+            }
+        return super().get_topic(topic_id)
+
+
+class FakeOpenAIClient:
+    """Minimal OpenAI-compatible client for topic-title tests."""
+
+    def __init__(self, title):
+        self.title = title
+        self.prompts = []
+        self.responses = self
+
+    def create(self, model, input, temperature=0):
+        self.prompts.append({"model": model, "input": input, "temperature": temperature})
+
+        class Response:
+            pass
+
+        response = Response()
+        response.output_text = self.title
+        return response
+
+
 def _make_papers(count=100):
     """Create a mixed paper set large enough to exercise topic grouping."""
     papers = []
@@ -122,8 +153,39 @@ def test_topic_modeler_extracts_topics_with_representative_papers():
         "fit_bertopic",
     ]
     assert result["topics"][0]["title"] == "Language / Models / Agents"
+    assert result["topics"][0]["representation"]["Main"][0] == {
+        "term": "language",
+        "score": 0.8,
+    }
+    assert "representation_text" in result["topics"][0]
     assert len(result["topics"][0]["representative_papers"]) == 5
     assert result["topics"][1]["keywords"] == ["markov", "chains", "mixing"]
+
+
+def test_topic_modeler_titles_use_bertopic_representation_with_openai():
+    """Topic titles are generated from BERTopic representation through OpenAI."""
+    fake_client = FakeOpenAIClient("Agent Planning Systems with Extra Words")
+    modeler = TopicModeler(
+        embedder=FakeEmbedder(),
+        topic_model=FakeRepresentedTopicModel(),
+        openai_client=fake_client,
+    )
+
+    result = modeler.extract_topics(
+        papers=_make_papers(12),
+        min_topic_size=3,
+        representative_papers_per_topic=3,
+    )
+
+    topic = result["topics"][0]
+    assert topic["representation"]["OpenAI"][0] == {
+        "term": "Agentic Planning Evaluation",
+        "score": 1.0,
+    }
+    assert topic["representation_text"].startswith("OpenAI: Agentic Planning Evaluation")
+    assert topic["title"] == "Agent Planning Systems with Extra Words"
+    assert fake_client.prompts[0]["model"] == "gpt-4o-mini"
+    assert "Agentic Planning Evaluation" in fake_client.prompts[0]["input"]
 
 
 def test_topic_modeler_get_topic_info_after_extraction():

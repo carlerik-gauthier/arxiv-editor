@@ -455,7 +455,7 @@ class JuliusSession:
         topic = request.topic_query or "all assigned research areas"
         if next_questions:
             return f"I interpreted the request as {topic}, but need one clarification."
-        return f"I interpreted the request as {topic}. Say 'generate draft' when ready."
+        return f"I interpreted the request as {topic}. I can start the draft now."
 
     def _build_response(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Type
 
 from src.agents.base_agent import AgentTool, BaseAgent
@@ -69,6 +70,214 @@ class SpecializedAgent(BaseAgent):
     def _default_tools(cls) -> List[AgentTool]:
         """Return base research tools plus any subclass-specific tools."""
         return [*get_base_tools(), *cls.extra_tools]
+
+    def handle_research_handoff(self, context: Any) -> Dict[str, Any]:
+        """
+        Execute the default specialist research workflow for a Julius handoff.
+
+        The specialist checks whether relevant paper abstracts are already
+        available, fetches category papers when needed, discovers topics from
+        abstracts, and produces brief topic summaries with representative papers.
+        """
+        constraints = getattr(context, "constraints", {}) or {}
+        summary_request = constraints.get("summary_request") or {}
+        categories = self._relevant_categories(summary_request)
+        papers = self._filter_relevant_papers(
+            constraints.get("selected_papers") or [],
+            categories,
+        )
+
+        threshold = self.execute_tool(
+            "check_threshold_tool",
+            {"paper_count": len(papers), "min_threshold": 1},
+        )
+        if threshold.success and not threshold.result.get("threshold_met"):
+            fetched = self._fetch_relevant_papers(summary_request, categories)
+            if fetched:
+                papers = fetched
+
+        topic_result = self._discover_topics(papers, summary_request)
+        topic_summaries = self._summarize_topics(topic_result, papers, summary_request)
+        response_text = self._render_specialist_response(topic_summaries, papers, topic_result)
+
+        return {
+            "agent": self.name,
+            "response": response_text,
+            "paper_count": len(papers),
+            "abstract_count": len([paper for paper in papers if self._paper_abstract(paper)]),
+            "categories": categories,
+            "topics": topic_result.get("topics", []),
+            "topic_summaries": topic_summaries,
+            "status": "completed" if topic_summaries else "needs_data",
+        }
+
+    def can_handle_research_handoff(self, context: Any) -> bool:
+        """Return whether the handoff has enough structure for the research workflow."""
+        constraints = getattr(context, "constraints", {}) or {}
+        return bool(constraints.get("summary_request") or constraints.get("selected_papers"))
+
+    def _relevant_categories(self, summary_request: Dict[str, Any]) -> List[str]:
+        requested = list(summary_request.get("must_include_categories") or [])
+        if requested:
+            matching = [category for category in requested if category in self.categories]
+            return matching or requested
+        return list(self.categories)
+
+    def _filter_relevant_papers(
+        self,
+        papers: Iterable[Dict[str, Any]],
+        categories: List[str],
+    ) -> List[Dict[str, Any]]:
+        category_set = set(categories)
+        relevant = []
+        for paper in papers:
+            paper_dict = dict(paper)
+            paper_categories = set(paper_dict.get("categories") or [])
+            if not category_set or not paper_categories or category_set.intersection(paper_categories):
+                relevant.append(paper_dict)
+        return relevant
+
+    def _fetch_relevant_papers(
+        self,
+        summary_request: Dict[str, Any],
+        categories: List[str],
+    ) -> List[Dict[str, Any]]:
+        start_date, end_date = self._date_bounds(summary_request)
+        result = self.execute_tool(
+            "fetch_papers_tool",
+            {
+                "categories": categories,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "min_count": 1,
+            },
+        )
+        if not result.success:
+            return []
+        return [dict(paper) for paper in result.result.get("papers", [])]
+
+    def _discover_topics(
+        self,
+        papers: List[Dict[str, Any]],
+        summary_request: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not papers:
+            return {"topics": [], "topic_count": 0, "paper_count": 0, "status": "no_papers"}
+        result = self.execute_tool(
+            "discover_topics_tool",
+            {
+                "papers": papers,
+                "min_topic_size": max(2, min(5, len(papers))),
+                "representative_papers_per_topic": max(
+                    1,
+                    min(int(summary_request.get("max_papers") or 5), 5),
+                ),
+                "use_openai_representation": False,
+            },
+        )
+        if result.success and isinstance(result.result, dict):
+            return result.result
+        return {
+            "topics": [],
+            "topic_count": 0,
+            "paper_count": len(papers),
+            "status": "failed",
+            "error": result.error,
+        }
+
+    def _summarize_topics(
+        self,
+        topic_result: Dict[str, Any],
+        papers: List[Dict[str, Any]],
+        summary_request: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        topics = list(topic_result.get("topics") or [])
+        if not topics and papers:
+            topics = [
+                {
+                    "title": summary_request.get("topic_query") or f"{self.name} research",
+                    "representative_papers": papers[: int(summary_request.get("max_papers") or 5)],
+                    "paper_count": len(papers),
+                    "keywords": [],
+                }
+            ]
+
+        summaries = []
+        for topic in topics:
+            representative_papers = topic.get("representative_papers") or papers[:5]
+            if not representative_papers:
+                continue
+            summary = self.execute_tool(
+                "generate_summary_tool",
+                {
+                    "papers": representative_papers,
+                    "topic": topic.get("title") or "Discovered topic",
+                    "max_papers": min(
+                        len(representative_papers),
+                        int(summary_request.get("max_papers") or 5),
+                    ),
+                },
+            )
+            summaries.append(
+                {
+                    "topic": topic.get("title") or "Discovered topic",
+                    "paper_count": topic.get("paper_count", len(representative_papers)),
+                    "keywords": topic.get("keywords", []),
+                    "representative_papers": representative_papers,
+                    "summary": summary.result if summary.success else {"error": summary.error},
+                }
+            )
+        return summaries
+
+    def _render_specialist_response(
+        self,
+        topic_summaries: List[Dict[str, Any]],
+        papers: List[Dict[str, Any]],
+        topic_result: Dict[str, Any],
+    ) -> str:
+        if not papers:
+            return (
+                f"{self.name} did not find available abstracts in the relevant "
+                "ArXiv categories and needs a broader date range or category scope."
+            )
+        lines = [
+            f"{self.name} collected {len(papers)} abstracts and discovered "
+            f"{topic_result.get('topic_count', len(topic_summaries))} topics."
+        ]
+        for item in topic_summaries[:3]:
+            summary = item.get("summary", {})
+            summary_text = summary.get("summary") if isinstance(summary, dict) else str(summary)
+            titles = [
+                paper.get("title", "Untitled paper")
+                for paper in item.get("representative_papers", [])[:3]
+            ]
+            lines.append(
+                f"- {item['topic']}: {summary_text} "
+                f"Representative papers: {', '.join(titles)}."
+            )
+        return "\n".join(lines)
+
+    def _date_bounds(self, summary_request: Dict[str, Any]) -> tuple[date, date]:
+        date_range = summary_request.get("date_range") or {}
+        end = self._coerce_date(date_range.get("end_date")) or date.today()
+        start = self._coerce_date(date_range.get("start_date")) or (end - timedelta(days=7))
+        return start, end
+
+    @staticmethod
+    def _coerce_date(value: Any) -> Optional[date]:
+        if value is None:
+            return None
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            return date.fromisoformat(value[:10])
+        if hasattr(value, "date"):
+            return value.date()
+        return None
+
+    @staticmethod
+    def _paper_abstract(paper: Dict[str, Any]) -> str:
+        return str(paper.get("summary") or paper.get("abstract") or "").strip()
 
 
 class MichelAgent(SpecializedAgent):
