@@ -9,6 +9,8 @@ creation here is intentionally a lightweight preview with explicit provenance.
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -126,7 +128,11 @@ class JuliusSession:
 
         clean_message = " ".join(message.strip().split())
         self._record_message("user", clean_message)
-        intent = classify_user_intent_tool(clean_message, self.state.value)["intent"]
+        intent = classify_user_intent_tool(
+            clean_message,
+            self.state.value,
+            llm_client=getattr(self.julius, "llm_client", None),
+        )["intent"]
 
         if intent == JuliusIntent.FINALIZATION.value:
             response = self._finalize_current_draft(clean_message)
@@ -482,12 +488,16 @@ class JuliusSession:
         )
 
 
-def classify_user_intent_tool(message: str, session_state: str = "INTAKE") -> Dict[str, str]:
+def classify_user_intent_tool(
+    message: str,
+    session_state: str = "INTAKE",
+    llm_client: Optional[Any] = None,
+) -> Dict[str, str]:
     """
     Route a user message to the next session handler.
 
-    The classifier is intentionally keyword-based for deterministic tests and
-    local CLI use. An LLM classifier can later replace it behind this contract.
+    The classifier is keyword-first for deterministic tests and local CLI use.
+    If keywords are inconclusive, it can fall back to an OpenAI-compatible LLM.
     """
     lowered = message.lower().strip()
     state = session_state.upper()
@@ -512,7 +522,168 @@ def classify_user_intent_tool(message: str, session_state: str = "INTAKE") -> Di
         return {"intent": JuliusIntent.PREFERENCE_UPDATE.value}
     if any(keyword in lowered for keyword in ("summary", "summarize", "digest", "papers", "research", "one-pager", "one pager")):
         return {"intent": JuliusIntent.NEW_SUMMARY_REQUEST.value}
-    return {"intent": JuliusIntent.UNKNOWN.value}
+    llm_intent = _classify_user_intent_with_llm(
+        message=message,
+        session_state=state,
+        llm_client=llm_client,
+    )
+    return {"intent": llm_intent}
+
+
+def _classify_user_intent_with_llm(
+    message: str,
+    session_state: str,
+    llm_client: Optional[Any] = None,
+) -> str:
+    """Use an OpenAI-compatible LLM when keyword routing returns UNKNOWN."""
+    client = llm_client
+    if client is None:
+        client = _create_openai_client_for_intent()
+    if client is None:
+        return JuliusIntent.UNKNOWN.value
+
+    model = _intent_classifier_model()
+    valid_intents = ", ".join(intent.value for intent in JuliusIntent)
+    prompt = (
+        "Classify the user message into one Julius intent.\n"
+        f"Session state: {session_state}\n"
+        f"Valid intents: {valid_intents}\n"
+        "Return strict JSON only: {\"intent\":\"<INTENT>\"}.\n"
+        "If uncertain, return {\"intent\":\"UNKNOWN\"}.\n"
+        f"User message: {message}"
+    )
+    response = _call_intent_llm(client, prompt, model)
+    intent = _extract_intent_from_llm_response(response)
+    if intent in {candidate.value for candidate in JuliusIntent}:
+        return intent
+    return JuliusIntent.UNKNOWN.value
+
+
+def _call_intent_llm(client: Any, prompt: str, model: str) -> Any:
+    """Call common LLM client shapes for intent classification."""
+    if callable(client):
+        return client(prompt)
+
+    responses_api = getattr(client, "responses", None)
+    if responses_api is not None:
+        create_method = getattr(responses_api, "create", None)
+        if callable(create_method):
+            return create_method(
+                model=model,
+                input=prompt,
+                temperature=0,
+            )
+
+    chat_api = getattr(client, "chat", None)
+    if chat_api is not None:
+        completions_api = getattr(chat_api, "completions", None)
+        create_method = getattr(completions_api, "create", None)
+        if callable(create_method):
+            return create_method(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+            )
+
+    for method_name in ("complete", "generate", "chat", "invoke"):
+        method = getattr(client, method_name, None)
+        if callable(method):
+            try:
+                return method(
+                    messages=[{"role": "user", "content": prompt}],
+                    system_prompt="Return only JSON with an intent field.",
+                )
+            except TypeError:
+                return method(prompt)
+    return None
+
+
+def _extract_intent_from_llm_response(response: Any) -> str:
+    """Extract the classified intent from common response payload shapes."""
+    if response is None:
+        return JuliusIntent.UNKNOWN.value
+    if isinstance(response, dict):
+        if isinstance(response.get("intent"), str):
+            return response["intent"].strip().upper()
+        text_candidate = response.get("output_text") or response.get("content") or response.get("text")
+        if isinstance(text_candidate, str):
+            return _intent_from_text_payload(text_candidate)
+    if hasattr(response, "output_text") and isinstance(getattr(response, "output_text"), str):
+        return _intent_from_text_payload(response.output_text)
+    if hasattr(response, "choices"):
+        choices = getattr(response, "choices", []) or []
+        if choices:
+            message = getattr(choices[0], "message", None)
+            content = getattr(message, "content", None) if message is not None else None
+            if isinstance(content, str):
+                return _intent_from_text_payload(content)
+    if isinstance(response, str):
+        return _intent_from_text_payload(response)
+    return JuliusIntent.UNKNOWN.value
+
+
+def _intent_from_text_payload(text: str) -> str:
+    """Parse an intent from a text payload."""
+    candidate = text.strip()
+    if not candidate:
+        return JuliusIntent.UNKNOWN.value
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict) and isinstance(parsed.get("intent"), str):
+            return parsed["intent"].strip().upper()
+    except Exception:
+        pass
+    normalized = candidate.strip().strip('"').upper()
+    if normalized in {intent.value for intent in JuliusIntent}:
+        return normalized
+    return JuliusIntent.UNKNOWN.value
+
+
+def _create_openai_client_for_intent() -> Optional[Any]:
+    """Create a default OpenAI client for intent classification if configured."""
+    api_key = (
+        os.getenv("OPENAI_API_KEY")
+        or _settings_openai_api_key_for_intent()
+        or os.getenv("LLM_API_KEY")
+    )
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+    try:
+        return OpenAI(api_key=api_key)
+    except Exception:
+        return None
+
+
+def _settings_openai_api_key_for_intent() -> str:
+    """Read OpenAI API key from settings when available."""
+    try:
+        from config.settings import Settings
+    except Exception:
+        return ""
+    try:
+        settings = Settings()
+    except Exception:
+        return ""
+    return settings.openai_api_key or settings.llm_api_key
+
+
+def _intent_classifier_model() -> str:
+    """Resolve the OpenAI model used for intent fallback."""
+    model = os.getenv("OPENAI_MODEL")
+    if model:
+        return model
+    try:
+        from config.settings import Settings
+        settings = Settings()
+        if settings.llm_model:
+            return settings.llm_model
+    except Exception:
+        pass
+    return "gpt-4o-mini"
 
 
 def update_summary_request_tool(
