@@ -7,6 +7,7 @@ structured draft pieces that can later be replaced by LLM-backed versions.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.agents.base_agent import AgentTool
@@ -46,10 +47,30 @@ def create_paper_summary_tool(
     paper: Dict[str, Any],
     analysis: Optional[Dict[str, Any]] = None,
     summary_request: Optional[Any] = None,
+    llm_client: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Summarize one representative paper according to user preferences."""
     request = _coerce_request(summary_request)
     analysis = analysis or {}
+    if llm_client is not None:
+        llm_summary = _create_paper_summary_with_llm(
+            llm_client=llm_client,
+            paper=paper,
+            analysis=analysis,
+            request=request,
+        )
+        if llm_summary:
+            return llm_summary
+
+    return _create_paper_summary_heuristic(paper, analysis, request)
+
+
+def _create_paper_summary_heuristic(
+    paper: Dict[str, Any],
+    analysis: Dict[str, Any],
+    request: SummaryRequest,
+) -> Dict[str, Any]:
+    """Build a paper summary without an LLM client."""
     problem = analysis.get("problem") or analysis.get("problem_statement") or paper.get("summary", "")
     results = analysis.get("main_results") or analysis.get("key_results") or []
     if isinstance(results, str):
@@ -68,6 +89,7 @@ def create_paper_summary_tool(
             36,
         ),
         "audience": request.audience.value,
+        "source": "heuristic",
     }
 
 
@@ -132,6 +154,105 @@ def review_and_refine_tool(content: str, criteria: Optional[Iterable[str]] = Non
         "warnings": warnings,
         "passed": not warnings,
     }
+
+
+def _create_paper_summary_with_llm(
+    llm_client: Any,
+    paper: Dict[str, Any],
+    analysis: Dict[str, Any],
+    request: SummaryRequest,
+) -> Dict[str, Any]:
+    """Call an injected LLM client and normalize the stable paper-summary contract."""
+    prompt = _paper_summary_prompt(paper, analysis, request)
+    try:
+        response = _call_summary_llm(llm_client, prompt)
+        payload = _parse_summary_response(response)
+    except Exception:
+        return {}
+
+    heuristic = _create_paper_summary_heuristic(paper, analysis, request)
+    return {
+        "title": str(payload.get("title") or heuristic["title"]),
+        "arxiv_id": payload.get("arxiv_id") or heuristic.get("arxiv_id"),
+        "problem": _first_words(payload.get("problem") or heuristic["problem"], 40),
+        "main_result": _first_words(payload.get("main_result") or heuristic["main_result"], 45),
+        "significance": _first_words(payload.get("significance") or heuristic["significance"], 36),
+        "audience": request.audience.value,
+        "source": "llm",
+    }
+
+
+def _paper_summary_prompt(
+    paper: Dict[str, Any],
+    analysis: Dict[str, Any],
+    request: SummaryRequest,
+) -> str:
+    """Build a compact prompt for LLM-backed paper summaries."""
+    return (
+        "Summarize one representative research paper for Julius.\n"
+        "Return strict JSON with keys: title, arxiv_id, problem, main_result, significance.\n"
+        f"Audience: {request.audience.value}\n"
+        f"Depth: {request.depth.value}\n"
+        f"Paper title: {_paper_title(paper)}\n"
+        f"ArXiv ID: {paper.get('arxiv_id') or paper.get('id') or ''}\n"
+        f"Paper summary: {paper.get('summary') or paper.get('abstract') or ''}\n"
+        f"Existing analysis: {json.dumps(analysis, default=str, sort_keys=True)}"
+    )
+
+
+def _call_summary_llm(llm_client: Any, prompt: str) -> Any:
+    """Call common LLM client shapes used by project tools."""
+    if callable(llm_client):
+        return llm_client(prompt)
+
+    responses_api = getattr(llm_client, "responses", None)
+    create_method = getattr(responses_api, "create", None)
+    if callable(create_method):
+        return create_method(model=getattr(llm_client, "model", "gpt-4o-mini"), input=prompt)
+
+    chat_api = getattr(llm_client, "chat", None)
+    completions_api = getattr(chat_api, "completions", None)
+    create_method = getattr(completions_api, "create", None)
+    if callable(create_method):
+        return create_method(
+            model=getattr(llm_client, "model", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+    for method_name in ("complete", "generate", "chat", "invoke"):
+        method = getattr(llm_client, method_name, None)
+        if callable(method):
+            return method(prompt)
+
+    raise TypeError("llm_client must be callable or expose a common generation method")
+
+
+def _parse_summary_response(response: Any) -> Dict[str, Any]:
+    """Normalize LLM output into a dictionary."""
+    if isinstance(response, dict):
+        return dict(response)
+    text = _extract_llm_text(response)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {"main_result": text, "significance": text}
+    return payload if isinstance(payload, dict) else {"main_result": text, "significance": text}
+
+
+def _extract_llm_text(response: Any) -> str:
+    """Extract text from common OpenAI-compatible response shapes."""
+    if isinstance(response, str):
+        return response.strip()
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str):
+        return output_text.strip()
+    choices = getattr(response, "choices", None)
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        if isinstance(content, str):
+            return content.strip()
+    return str(response).strip()
 
 
 def get_synthesis_tools() -> List[AgentTool]:

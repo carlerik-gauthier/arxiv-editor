@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import pickle
+import numpy as np
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -216,4 +217,4 @@ def _to_float_list(embedding: Any) -> List[float]:
     """Convert numpy arrays, tensors, or plain iterables to a float list."""
     if hasattr(embedding, "tolist"):
         embedding = embedding.tolist()
-    return [float(value) for value in embedding]
+    return np.array([float(value) for value in embedding])

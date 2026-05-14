@@ -19,7 +19,10 @@ from src.agents import (
     create_all_specialized_agents,
     create_specialized_agent,
 )
+from agents import Agent as OpenAIAgent
+from agents import FunctionTool
 from src.agents.tools import check_threshold_tool, create_metaphor_tool, generate_summary_tool
+from src.agents.specialized_agents import DEFAULT_SPECIALIST_MIN_PAPERS
 
 
 EXPECTED_AGENTS = [
@@ -54,6 +57,8 @@ def test_specialized_agent_profiles_and_tools(agent_class, name, categories, cus
     assert "generate_summary_tool" in agent.list_tools()
     if custom_tool:
         assert custom_tool in agent.list_tools()
+    assert isinstance(agent.sdk_agent, OpenAIAgent)
+    assert all(isinstance(tool, FunctionTool) for tool in agent.get_sdk_tools())
 
 
 def test_michel_metaphor_tool_execution():
@@ -142,15 +147,27 @@ def test_specialized_handoff_fetches_topics_and_summarizes_representatives():
     def fake_discover_topics_tool(
         papers,
         min_topic_size=2,
+        num_topics=None,
         representative_papers_per_topic=5,
-        use_openai_representation=False,
+        use_openai_representation=True,
     ):
         paper_list = list(papers)
-        events.append(("discover", len(paper_list), min_topic_size, representative_papers_per_topic))
+        events.append(
+            (
+                "discover",
+                len(paper_list),
+                min_topic_size,
+                num_topics,
+                representative_papers_per_topic,
+                use_openai_representation,
+            )
+        )
         return {
             "topics": [
                 {
                     "title": "Language Agent Planning",
+                    "description": "LLM-generated description of language agent planning.",
+                    "description_source": "llm",
                     "keywords": ["agents", "planning"],
                     "paper_count": len(paper_list),
                     "representative_papers": paper_list[:2],
@@ -199,20 +216,28 @@ def test_specialized_handoff_fetches_topics_and_summarizes_representatives():
                     "start_date": "2026-05-01",
                     "end_date": "2026-05-07",
                 },
-                "must_include_categories": ["cs.AI"],
-                "max_papers": 2,
+                    "must_include_categories": ["cs.AI"],
+                    "max_papers": 2,
+                    "max_topics": 1,
+                },
+                "selected_papers": [],
+                "max_topics": 1,
             },
-            "selected_papers": [],
-        },
-    )
+        )
 
     handoff = AgentHandoff.execute_handoff(julius, specialist, context)
 
     response = handoff.result["response"]
     tool_names = [call["tool_name"] for call in specialist.state["tool_calls"]]
     assert handoff.status.value == "COMPLETED"
-    assert events[0] == ("fetch", ["cs.AI"], "2026-05-01", "2026-05-07", 1)
-    assert events[1] == ("discover", 2, 2, 2)
+    assert events[0] == (
+        "fetch",
+        ["cs.AI"],
+        "2026-05-01",
+        "2026-05-07",
+        DEFAULT_SPECIALIST_MIN_PAPERS,
+    )
+    assert events[1] == ("discover", 2, 2, 1, 2, True)
     assert tool_names == [
         "check_threshold_tool",
         "fetch_papers_tool",
@@ -220,5 +245,8 @@ def test_specialized_handoff_fetches_topics_and_summarizes_representatives():
         "generate_summary_tool",
     ]
     assert response["paper_count"] == 2
+    assert response["requested_topic_count"] == 1
+    assert response["minimum_paper_count"] == DEFAULT_SPECIALIST_MIN_PAPERS
     assert response["topic_summaries"][0]["topic"] == "Language Agent Planning"
+    assert response["topic_summaries"][0]["description_source"] == "llm"
     assert "Representative papers" in response["response"]

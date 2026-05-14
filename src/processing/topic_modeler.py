@@ -122,7 +122,7 @@ class TopicModeler:
             raise ValueError("representative_papers_per_topic must be at least 1")
 
         records = normalize_papers(papers)
-        documents = [record.summary for record in records]
+        documents = [record.text for record in records]
         progress = [
             {"stage": "normalize_papers", "status": "completed", "paper_count": len(records)}
         ]
@@ -184,9 +184,16 @@ class TopicModeler:
                 keywords,
                 representative_papers,
             )
+            description, description_source = self._generate_description_from_representation(
+                representation,
+                keywords,
+                representative_papers,
+            )
             topic_result = {
                 "topic_id": topic_id,
                 "title": title,
+                "description": description,
+                "description_source": description_source,
                 "keywords": keywords,
                 "representation": representation,
                 "representation_text": _topic_representation_text(representation),
@@ -602,6 +609,30 @@ class TopicModeler:
 
         return _concise_topic_title(self.title_generator(keywords, representative_papers))
 
+    def _generate_description_from_representation(
+        self,
+        representation: Dict[str, List[Dict[str, Any]]],
+        keywords: List[str],
+        representative_papers: List[Dict[str, Any]],
+    ) -> tuple[str, str]:
+        """Generate a topic description with an OpenAI call when available."""
+        representation_text = _topic_representation_text(representation)
+        if self.use_openai_representation:
+            description = _generate_openai_topic_description(
+                client=self.openai_client,
+                api_key=self.openai_api_key,
+                model=self.representation_model_name,
+                representation_text=representation_text,
+                representative_papers=representative_papers,
+            )
+            if description:
+                return description, "llm"
+
+        fallback_terms = ", ".join(keywords[:4]) if keywords else representation_text
+        if fallback_terms:
+            return f"Research cluster centered on {fallback_terms}.", "heuristic"
+        return "Emerging research topic discovered from the selected ArXiv papers.", "heuristic"
+
 
 def normalize_papers(papers: Iterable[Any]) -> List[PaperTopicRecord]:
     """
@@ -752,6 +783,42 @@ def _generate_openai_topic_title(
     return _concise_topic_title(_extract_text_response(response))
 
 
+def _generate_openai_topic_description(
+    client: Optional[Any],
+    api_key: Optional[str],
+    model: str,
+    representation_text: str,
+    representative_papers: Sequence[Dict[str, Any]],
+) -> Optional[str]:
+    """Ask OpenAI for a concise topic description from BERTopic output."""
+    if not representation_text:
+        return None
+
+    llm_client = client
+    if llm_client is None:
+        try:
+            llm_client = _create_openai_client(api_key)
+        except (ImportError, ValueError):
+            return None
+
+    paper_titles = [
+        str(paper.get("title", ""))
+        for paper in representative_papers[:5]
+        if paper.get("title")
+    ]
+    prompt = (
+        "Create a concise two-sentence research topic description from this "
+        "BERTopic representation.\n"
+        f"Topic representation: {representation_text}\n"
+        f"Representative papers: {'; '.join(paper_titles)}"
+    )
+    try:
+        response = _call_openai_title_client(llm_client, model, prompt)
+    except Exception:
+        return None
+    return _concise_topic_description(_extract_text_response(response))
+
+
 def _call_openai_title_client(client: Any, model: str, prompt: str) -> Any:
     """Call common OpenAI-compatible client shapes."""
     responses_api = getattr(client, "responses", None)
@@ -805,6 +872,24 @@ def _concise_topic_title(title: str, max_words: int = 6) -> str:
     if len(words) > max_words:
         cleaned = " ".join(words[:max_words])
     return cleaned.rstrip(" .,:;")
+
+
+def _concise_topic_description(description: str, max_words: int = 80) -> str:
+    """Normalize model output to a compact topic description."""
+    cleaned = str(description or "").strip().strip('"').strip("'")
+    cleaned = re.sub(
+        r"^\s*(topic\s+description|description)\s*:\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return ""
+    words = cleaned.split()
+    if len(words) > max_words:
+        cleaned = " ".join(words[:max_words]).rstrip(" .,:;") + "."
+    return cleaned
 
 
 def _create_openai_client(openai_api_key: Optional[str] = None) -> Any:

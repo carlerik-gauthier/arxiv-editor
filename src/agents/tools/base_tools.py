@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.agents.base_agent import AgentTool
+from src.analysis.paper_analyzer import PaperAnalyzer
 from src.agents.tools.embedding_tool import get_embedding_tool
 from src.agents.tools.impact_assessment_tool import get_impact_assessment_tool
 from src.agents.tools.formatting_tool import get_formatting_tool
@@ -122,52 +124,54 @@ def check_threshold_tool(paper_count: int, min_threshold: int = 100) -> Dict[str
     }
 
 
-def analyze_paper_tool(paper_text: str, max_chars: int = 12000) -> Dict[str, Any]:
+def analyze_paper_tool(
+    paper_text: str,
+    max_chars: int = 12000,
+    paper_metadata: Optional[Dict[str, Any]] = None,
+    domain: Optional[str] = None,
+    llm_client: Optional[Any] = None,
+    analyzer: Optional[PaperAnalyzer] = None,
+    max_chunk_tokens: int = 1800,
+) -> Dict[str, Any]:
     """
     Extract likely problem and result statements from paper text.
 
-    This deterministic implementation is a phase-3 placeholder. Later LLM-based
-    tools can replace it while preserving the same output contract.
+    Uses PaperAnalyzer, which calls an injected LLM client when available and
+    falls back to documented section heuristics for offline workflows.
     """
     if not paper_text or not paper_text.strip():
         raise ValueError("paper_text cannot be empty")
 
     text = " ".join(paper_text[:max_chars].split())
-    sentences = _split_sentences(text)
-
-    problem_keywords = (
-        "problem",
-        "question",
-        "challenge",
-        "address",
-        "study",
-        "investigate",
-        "aim",
+    active_analyzer = analyzer or PaperAnalyzer(
+        llm_client=llm_client,
+        max_chunk_tokens=max_chunk_tokens,
     )
-    result_keywords = (
-        "we prove",
-        "we show",
-        "we establish",
-        "we introduce",
-        "we present",
-        "main result",
-        "theorem",
-        "result",
+    problem_result = active_analyzer.extract_problem_statement(
+        text,
+        paper_metadata=paper_metadata or {},
     )
+    key_results = active_analyzer.extract_key_results(
+        text,
+        paper_metadata=paper_metadata or {},
+        domain=domain,
+    )
+    main_results = [
+        str(result.get("statement", "")).strip()
+        for result in key_results.get("results", [])
+        if result.get("statement")
+    ]
 
-    problem_sentences = _select_sentences(sentences, problem_keywords, limit=3)
-    result_sentences = _select_sentences(sentences, result_keywords, limit=5)
-
-    if not problem_sentences:
-        problem_sentences = sentences[:2]
-    if not result_sentences:
-        result_sentences = sentences[2:5] or sentences[:2]
+    if not main_results:
+        main_results = _heuristic_result_sentences(text)
 
     return {
-        "problem": " ".join(problem_sentences).strip(),
-        "main_results": result_sentences,
-        "confidence": "heuristic",
+        "problem": problem_result.get("problem", ""),
+        "main_results": main_results,
+        "confidence": _combined_confidence(problem_result, key_results),
         "text_chars_analyzed": min(len(paper_text), max_chars),
+        "problem_details": problem_result,
+        "result_details": key_results,
     }
 
 
@@ -175,8 +179,9 @@ def generate_summary_tool(
     papers: Iterable[Any],
     topic: str,
     max_papers: int = 5,
+    llm_client: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Create a compact deterministic topic summary from paper metadata."""
+    """Create a compact topic summary from paper metadata, using an LLM when supplied."""
     paper_dicts = [_paper_to_dict(paper) for paper in papers]
     selected = paper_dicts[:max_papers]
 
@@ -188,8 +193,18 @@ def generate_summary_tool(
     titles = [paper.get("title", "Untitled paper") for paper in selected]
     summaries = [paper.get("summary", "") for paper in selected if paper.get("summary")]
     combined_summary = " ".join(summaries)
-    lead = _first_words(combined_summary, 70)
+    if llm_client is not None:
+        llm_summary = _generate_summary_with_llm(llm_client, topic, selected)
+        if llm_summary:
+            return {
+                "topic": topic,
+                "paper_count": len(paper_dicts),
+                "representative_papers": titles,
+                "summary": llm_summary,
+                "source": "llm",
+            }
 
+    lead = _first_words(combined_summary, 70)
     return {
         "topic": topic,
         "paper_count": len(paper_dicts),
@@ -199,6 +214,7 @@ def generate_summary_tool(
             if lead
             else f"{topic}: representative work includes {', '.join(titles)}."
         ),
+        "source": "heuristic",
     }
 
 
@@ -263,6 +279,121 @@ def _select_sentences(
             if len(selected) >= limit:
                 break
     return selected
+
+
+def _heuristic_result_sentences(text: str) -> List[str]:
+    """Fallback result extraction used only when PaperAnalyzer returns no statements."""
+    sentences = _split_sentences(text)
+    result_keywords = (
+        "we prove",
+        "we show",
+        "we establish",
+        "we introduce",
+        "we present",
+        "main result",
+        "theorem",
+        "result",
+    )
+    result_sentences = _select_sentences(sentences, result_keywords, limit=5)
+    return result_sentences or sentences[2:5] or sentences[:2]
+
+
+def _combined_confidence(
+    problem_result: Dict[str, Any],
+    key_results: Dict[str, Any],
+) -> str:
+    """Return a compact confidence/source label for the combined analysis."""
+    sources = {
+        str(problem_result.get("source") or problem_result.get("confidence") or "").lower(),
+        str(key_results.get("source") or key_results.get("confidence") or "").lower(),
+    }
+    if "llm" in sources:
+        return "llm"
+    if any(source == "heuristic_fallback" for source in sources):
+        return "heuristic_fallback"
+    return "heuristic"
+
+
+def _generate_summary_with_llm(
+    llm_client: Any,
+    topic: str,
+    papers: List[Dict[str, Any]],
+) -> str:
+    """Call an injected LLM client and normalize a topic-summary response."""
+    prompt = _summary_prompt(topic, papers)
+    try:
+        response = _call_summary_llm(llm_client, prompt)
+    except Exception:
+        logger.exception("LLM summary generation failed; falling back to heuristic summary.")
+        return ""
+
+    if isinstance(response, dict):
+        response = response.get("summary") or response.get("content") or response.get("text")
+    elif not isinstance(response, str):
+        response = _extract_llm_text(response)
+
+    summary = str(response or "").strip().strip('"')
+    return " ".join(summary.split())
+
+
+def _summary_prompt(topic: str, papers: List[Dict[str, Any]]) -> str:
+    """Build a concise prompt for LLM-backed topic summaries."""
+    paper_lines = []
+    for index, paper in enumerate(papers, start=1):
+        title = paper.get("title", "Untitled paper")
+        summary = _first_words(str(paper.get("summary") or paper.get("abstract") or ""), 55)
+        paper_lines.append(f"{index}. {title}: {summary}")
+    return (
+        "Write a concise research-topic summary for Julius.\n"
+        f"Topic: {topic}\n"
+        "Representative papers:\n"
+        + "\n".join(paper_lines)
+        + "\nReturn 2-4 sentences only."
+    )
+
+
+def _call_summary_llm(llm_client: Any, prompt: str) -> Any:
+    """Call common LLM client shapes used elsewhere in the repo."""
+    if callable(llm_client):
+        return llm_client(prompt)
+
+    responses_api = getattr(llm_client, "responses", None)
+    create_method = getattr(responses_api, "create", None)
+    if callable(create_method):
+        return create_method(model=getattr(llm_client, "model", "gpt-4o-mini"), input=prompt)
+
+    chat_api = getattr(llm_client, "chat", None)
+    completions_api = getattr(chat_api, "completions", None)
+    create_method = getattr(completions_api, "create", None)
+    if callable(create_method):
+        return create_method(
+            model=getattr(llm_client, "model", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+    for method_name in ("complete", "generate", "chat", "invoke"):
+        method = getattr(llm_client, method_name, None)
+        if callable(method):
+            return method(prompt)
+
+    raise TypeError("llm_client must be callable or expose a common generation method")
+
+
+def _extract_llm_text(response: Any) -> str:
+    """Extract text from common OpenAI-compatible response shapes."""
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str):
+        return output_text
+    choices = getattr(response, "choices", None)
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        if isinstance(content, str):
+            return content
+    try:
+        return json.dumps(response, default=str)
+    except TypeError:
+        return str(response)
 
 
 def _first_words(text: str, limit: int) -> str:

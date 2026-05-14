@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, MutableMapping
 
-from src.agents import JuliusSession
-from src.agents.tools import format_document_tool
+from src.agents import AgentTool, JeanBaptisteAgent, JuliusAgent, JuliusSession, MichelAgent
+from src.agents.tools import format_document_tool, generate_summary_tool
 from src.generation.interactive_workflow import InteractiveSummaryWorkflow
 
 
@@ -420,6 +420,12 @@ def build_smoke_workflow() -> InteractiveSummaryWorkflow:
     """Create a workflow with deterministic sample data for smoke tests."""
     return InteractiveSummaryWorkflow(
         julius_session=JuliusSession(
+            julius=JuliusAgent(
+                specialist_agents=[
+                    MichelAgent(),
+                    JeanBaptisteAgent(tools=_smoke_specialist_tools()),
+                ]
+            ),
             selected_papers=[
                 {
                     "title": "Agent Planning Benchmarks",
@@ -427,6 +433,63 @@ def build_smoke_workflow() -> InteractiveSummaryWorkflow:
                     "arxiv_id": "2605.00001",
                     "score": 1.0,
                 }
-            ]
+            ],
+            run_specialists_in_preview=True,
         )
     )
+
+
+def _smoke_specialist_tools() -> list[AgentTool]:
+    """Return deterministic specialist tools for UI smoke workflows."""
+    def threshold_met(paper_count: int, min_threshold: int = 60) -> Dict[str, Any]:
+        return {
+            "paper_count": paper_count,
+            "min_threshold": min_threshold,
+            "threshold_met": True,
+            "missing_count": 0,
+        }
+
+    def discover_topics(
+        papers: Any,
+        min_topic_size: int = 2,
+        num_topics: int | None = None,
+        representative_papers_per_topic: int = 5,
+        use_openai_representation: bool = True,
+    ) -> Dict[str, Any]:
+        paper_list = list(papers)
+        return {
+            "topics": [
+                {
+                    "title": "LLM Agent Planning",
+                    "description": "LLM-generated smoke topic description.",
+                    "description_source": "llm",
+                    "keywords": ["agents", "planning"],
+                    "paper_count": len(paper_list),
+                    "representative_papers": paper_list[:representative_papers_per_topic],
+                }
+            ][: num_topics or 1],
+            "topic_count": 1,
+            "paper_count": len(paper_list),
+            "status": "completed",
+        }
+
+    return [
+        AgentTool(
+            name="check_threshold_tool",
+            description="Check whether enough papers are available.",
+            function=threshold_met,
+            required_parameters=["paper_count", "min_threshold"],
+        ),
+        AgentTool(
+            name="discover_topics_tool",
+            description="Discover topics.",
+            function=discover_topics,
+            required_parameters=["papers"],
+        ),
+        AgentTool(
+            name="generate_summary_tool",
+            description="Summarize representative papers.",
+            function=generate_summary_tool,
+            required_parameters=["papers", "topic"],
+        ),
+    ]

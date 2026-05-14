@@ -182,6 +182,8 @@ def test_topic_modeler_titles_use_bertopic_representation_with_openai():
         "term": "Agentic Planning Evaluation",
         "score": 1.0,
     }
+    assert topic["description"] == "Agent Planning Systems with Extra Words"
+    assert topic["description_source"] == "llm"
     assert topic["representation_text"].startswith("OpenAI: Agentic Planning Evaluation")
     assert topic["title"] == "Agent Planning Systems with Extra Words"
     assert fake_client.prompts[0]["model"] == "gpt-4o-mini"

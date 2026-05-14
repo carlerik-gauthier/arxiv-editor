@@ -1,19 +1,25 @@
 """
 Base AI agent abstraction and tool execution framework.
 
-The classes in this module are intentionally provider-agnostic. A concrete LLM
-client can be injected as long as it exposes one of the common completion
-methods handled by BaseAgent.
+The public classes in this module preserve the project's deterministic local
+contracts while wiring agents and tools through the OpenAI Agents SDK.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
+from collections import abc as collections_abc
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from enum import Enum
+from types import UnionType
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union, get_args, get_origin
+
+from agents import Agent as OpenAIAgent
+from agents import FunctionTool, RunContextWrapper
 
 from src.agents import openai_tracing
 
@@ -57,12 +63,16 @@ class ToolResult:
 
 @dataclass
 class AgentTool:
-    """Callable tool registered with an agent."""
+    """Callable tool registered with an agent and exposed as an SDK FunctionTool."""
 
     name: str
     description: str
     function: Callable[..., Any]
     required_parameters: List[str] = field(default_factory=list)
+    sdk_tool: FunctionTool = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.sdk_tool = self._build_sdk_tool()
 
     def execute(self, parameters: Optional[Dict[str, Any]] = None) -> Any:
         """Validate and execute the tool function."""
@@ -80,12 +90,37 @@ class AgentTool:
         return self.function(**parameters)
 
     def to_schema(self) -> Dict[str, Any]:
-        """Return a simple schema suitable for prompt construction."""
+        """Return the SDK-backed schema suitable for prompt construction."""
         return {
             "name": self.name,
             "description": self.description,
+            "parameters": self.sdk_tool.params_json_schema,
             "required_parameters": self.required_parameters,
         }
+
+    def _build_sdk_tool(self) -> FunctionTool:
+        """Build an OpenAI Agents SDK tool around the existing callable."""
+        params_json_schema = _build_tool_params_schema(
+            self.function,
+            self.name,
+            self.required_parameters,
+        )
+
+        async def invoke_tool(_ctx: RunContextWrapper[Any], args: str) -> Any:
+            try:
+                parameters = json.loads(args) if args else {}
+            except json.JSONDecodeError as exc:
+                raise ToolExecutionError(f"Invalid JSON arguments for {self.name}") from exc
+            if not isinstance(parameters, dict):
+                raise ToolExecutionError(f"Arguments for {self.name} must be a JSON object")
+            return self.execute(parameters)
+
+        return FunctionTool(
+            name=self.name,
+            description=self.description,
+            params_json_schema=params_json_schema,
+            on_invoke_tool=invoke_tool,
+        )
 
 
 class BaseAgent:
@@ -121,6 +156,12 @@ class BaseAgent:
         self.llm_client = llm_client
         self.system_prompt = system_prompt or self._build_default_system_prompt()
         self.tools: Dict[str, AgentTool] = {}
+        self._sdk_extra_tools: List[FunctionTool] = []
+        self.sdk_agent = OpenAIAgent(
+            name=self.name,
+            instructions=self.system_prompt,
+            tools=[],
+        )
         self.conversation_history: List[Dict[str, Any]] = []
         self.state: Dict[str, Any] = {
             "tool_calls": [],
@@ -158,6 +199,7 @@ class BaseAgent:
         if not tool.name:
             raise ValueError("Tool name cannot be empty")
         self.tools[tool.name] = tool
+        self._sync_sdk_tools()
         logger.debug("Registered tool '%s' for agent '%s'", tool.name, self.name)
 
     def list_tools(self) -> List[str]:
@@ -167,6 +209,30 @@ class BaseAgent:
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """Return simple schemas for available tools."""
         return [tool.to_schema() for tool in self.tools.values()]
+
+    def get_sdk_tools(self) -> List[FunctionTool]:
+        """Return OpenAI Agents SDK tools registered on this agent."""
+        return [tool.sdk_tool for tool in self.tools.values()]
+
+    def register_sdk_tool(self, tool: FunctionTool) -> None:
+        """Register an SDK-only tool, such as another agent exposed as a tool."""
+        self._sdk_extra_tools.append(tool)
+        self._sync_sdk_tools()
+
+    def as_sdk_tool(
+        self,
+        tool_name: Optional[str] = None,
+        tool_description: Optional[str] = None,
+    ) -> FunctionTool:
+        """Expose this agent as an OpenAI Agents SDK tool."""
+        return self.sdk_agent.as_tool(
+            tool_name=tool_name or _agent_tool_name(self.name),
+            tool_description=tool_description or self.expertise,
+        )
+
+    def _sync_sdk_tools(self) -> None:
+        """Keep the SDK Agent's tool list aligned with the local registry."""
+        self.sdk_agent.tools = [*self.get_sdk_tools(), *self._sdk_extra_tools]
 
     def execute_tool(
         self,
@@ -442,3 +508,98 @@ def _infer_llm_model_name(llm_client: Any) -> Optional[str]:
             return str(value)
 
     return type(llm_client).__name__
+
+
+def _build_tool_params_schema(
+    function: Callable[..., Any],
+    tool_name: str,
+    required_parameters: List[str],
+) -> Dict[str, Any]:
+    """Create a strict JSON schema for an SDK FunctionTool."""
+    properties: Dict[str, Any] = {}
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature is not None:
+        for parameter_name, parameter in signature.parameters.items():
+            if parameter.kind in {
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            }:
+                continue
+
+            schema = _json_schema_for_annotation(parameter.annotation)
+            if schema is None and parameter_name not in required_parameters:
+                continue
+            properties[parameter_name] = schema or {}
+
+    for parameter_name in required_parameters:
+        properties.setdefault(parameter_name, {})
+
+    return {
+        "type": "object",
+        "title": f"{tool_name}_args",
+        "properties": properties,
+        "required": list(required_parameters),
+        "additionalProperties": False,
+    }
+
+
+def _json_schema_for_annotation(annotation: Any) -> Optional[Dict[str, Any]]:
+    """Map common Python annotations to JSON schema for SDK tools."""
+    if annotation in (inspect.Signature.empty, Any):
+        return {}
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    if origin in (Union, UnionType):
+        non_none_args = [arg for arg in args if arg is not type(None)]
+        if len(non_none_args) == 1:
+            return _json_schema_for_annotation(non_none_args[0])
+        schemas = [
+            schema
+            for schema in (_json_schema_for_annotation(arg) for arg in non_none_args)
+            if schema is not None
+        ]
+        return {"anyOf": schemas} if schemas else {}
+
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    if annotation is datetime:
+        return {"type": "string", "format": "date-time"}
+
+    if origin in (list, List, set, tuple, collections_abc.Iterable):
+        item_schema = _json_schema_for_annotation(args[0]) if args else {}
+        return {"type": "array", "items": item_schema or {}}
+
+    if origin in (dict, Dict):
+        return {"type": "object"}
+
+    if inspect.isclass(annotation):
+        if issubclass(annotation, Enum):
+            return {
+                "type": "string",
+                "enum": [str(item.value) for item in annotation],
+            }
+        if hasattr(annotation, "model_json_schema"):
+            return {"type": "object"}
+        if annotation.__module__ == "builtins":
+            return {}
+        return None
+
+    return {}
+
+
+def _agent_tool_name(agent_name: str) -> str:
+    """Return a stable SDK tool name for an agent-as-tool wrapper."""
+    normalized = re.sub(r"[^a-z0-9]+", "_", agent_name.lower()).strip("_")
+    return f"{normalized or 'agent'}_agent"

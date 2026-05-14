@@ -5,6 +5,7 @@ from src.agents import (
     AgentTaskStatus,
     ChrisAgent,
     HandoffContext,
+    JeanBaptisteAgent,
     JuliusAgent,
     MichelAgent,
     WorkflowState,
@@ -13,7 +14,7 @@ from src.agents import (
 
 def _make_julius():
     """Create Julius with a small deterministic specialist registry."""
-    return JuliusAgent(specialist_agents=[MichelAgent(), ChrisAgent()])
+    return JuliusAgent(specialist_agents=[MichelAgent(), ChrisAgent(tools=[])])
 
 
 def test_julius_initializes_coordination_tools_and_prompt():
@@ -102,6 +103,32 @@ def test_run_delegated_workflow_delegates_to_multiple_agents_and_compiles():
     assert "## Michel" in workflow["one_pager"]["content"]
     assert "## Chris" in workflow["one_pager"]["content"]
     assert [entry["state"] for entry in workflow["state_history"]][-1] == "COMPLETE"
+
+
+def test_create_execution_plan_caps_topic_budget_at_seven():
+    """Julius allocates no more than seven topics across specialist agents."""
+    julius = JuliusAgent(
+        specialist_agents=[
+            MichelAgent(),
+            JeanBaptisteAgent(),
+        ]
+    )
+    parsed_request = {
+        "raw_request": "Summarize all recent LLM agent research.",
+        "date_range": {},
+        "topics": ["LLM agents"],
+        "preferences": {"max_topics": 20},
+        "summary_request": {"max_topics": 20},
+    }
+
+    plan = julius.create_execution_plan(parsed_request)
+    allocated = [
+        assignment["constraints"].get("max_topics", 0)
+        for assignment in plan["assignments"]
+    ]
+
+    assert sum(allocated) <= 7
+    assert max(allocated) == 7
 
 
 def test_extension_request_is_recorded():

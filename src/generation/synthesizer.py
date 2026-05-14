@@ -20,6 +20,9 @@ from src.agents.tools.synthesis_tools import (
 from src.generation.user_request import Audience, SummaryFormat, SummaryRequest
 
 
+MAX_TOPICS_PER_RESPONSE = 7
+
+
 class ContentSynthesizer:
     """Build structured draft sections from agent outputs and user preferences."""
 
@@ -114,6 +117,13 @@ class ContentSynthesizer:
         callbacks: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Create reusable draft sections before rendering."""
+        specialist_topics = _extract_specialist_topics(
+            callbacks,
+            min(request.max_topics, MAX_TOPICS_PER_RESPONSE),
+        )
+        if specialist_topics:
+            return _topic_sections(specialist_topics)
+
         sections = [
             {
                 "title": "Topic Overview",
@@ -220,3 +230,63 @@ def _stringify_section(content: Any) -> str:
                 rendered.append(str(item))
         return "\n".join(f"- {line}" for line in rendered)
     return str(content)
+
+
+def _extract_specialist_topics(
+    callbacks: List[Dict[str, Any]],
+    max_topics: int,
+) -> List[Dict[str, Any]]:
+    """Collect topic summaries from completed specialist callbacks."""
+    topics: List[Dict[str, Any]] = []
+    for callback in callbacks:
+        if callback.get("status") not in {"COMPLETED", "completed"}:
+            continue
+        result = callback.get("result") or {}
+        response = result.get("response") if isinstance(result, dict) else None
+        if not isinstance(response, dict):
+            continue
+        for topic in response.get("topic_summaries") or []:
+            topics.append(dict(topic))
+            if len(topics) >= max_topics:
+                return topics
+    return topics
+
+
+def _topic_sections(topics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Render Julius's final output as repeated topic blocks."""
+    sections: List[Dict[str, Any]] = []
+    for index, topic in enumerate(topics, start=1):
+        name = str(topic.get("topic") or topic.get("title") or f"Topic {index}")
+        sections.extend(
+            [
+                {
+                    "title": f"Topic {index}: {name} + Description",
+                    "content": topic.get("description") or _summary_text(topic),
+                },
+                {
+                    "title": f"Topic {index} Main Results and Importance",
+                    "content": topic.get("main_results_and_importance") or _summary_text(topic),
+                },
+                {
+                    "title": f"References for Topic {index}",
+                    "content": _topic_references(topic),
+                },
+            ]
+        )
+    return sections
+
+
+def _summary_text(topic: Dict[str, Any]) -> str:
+    summary = topic.get("summary")
+    if isinstance(summary, dict):
+        return str(summary.get("summary") or summary)
+    return str(summary or "Specialist summary pending.")
+
+
+def _topic_references(topic: Dict[str, Any]) -> List[str]:
+    references = []
+    for paper in topic.get("representative_papers") or []:
+        title = str(paper.get("title") or "Untitled paper")
+        arxiv_id = paper.get("arxiv_id") or paper.get("id")
+        references.append(f"{title} ({arxiv_id})" if arxiv_id else title)
+    return references or ["Representative papers pending."]

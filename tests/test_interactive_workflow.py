@@ -133,14 +133,17 @@ def test_interactive_workflow_agents_fetch_when_no_matching_data_is_available():
     def fake_discover_topics_tool(
         papers,
         min_topic_size=2,
+        num_topics=None,
         representative_papers_per_topic=5,
-        use_openai_representation=False,
+        use_openai_representation=True,
     ):
         paper_list = list(papers)
         return {
             "topics": [
                 {
                     "title": "Fetched Agent Topic",
+                    "description": "LLM-generated fetched topic description.",
+                    "description_source": "llm",
                     "keywords": ["agent"],
                     "paper_count": len(paper_list),
                     "representative_papers": paper_list,
@@ -183,6 +186,7 @@ def test_interactive_workflow_agents_fetch_when_no_matching_data_is_available():
         julius_session=JuliusSession(
             julius=JuliusAgent(specialist_agents=[specialist]),
             reference_date="2026-05-12",
+            run_specialists_in_preview=True,
         )
     )
     workflow.handle_message("Give me an expert summary of LLM agents from last week")
@@ -199,6 +203,7 @@ def test_interactive_workflow_agents_fetch_when_no_matching_data_is_available():
         "check_threshold_tool",
         "fetch_papers_tool",
         "check_threshold_tool",
+        "fetch_papers_tool",
         "discover_topics_tool",
         "generate_summary_tool",
     ]

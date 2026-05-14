@@ -11,6 +11,9 @@ from src.agents.tools.base_tools import get_base_tools
 from src.agents.tools.metaphor_tool import get_metaphor_tool
 
 
+DEFAULT_SPECIALIST_MIN_PAPERS = 60
+
+
 @dataclass(frozen=True)
 class AgentProfile:
     """Static configuration used to initialize a specialized research agent."""
@@ -32,6 +35,7 @@ class SpecializedAgent(BaseAgent):
 
     profile: AgentProfile
     extra_tools: Iterable[AgentTool] = ()
+    uses_topic_workflow: bool = True
 
     def __init__(
         self,
@@ -81,6 +85,8 @@ class SpecializedAgent(BaseAgent):
         """
         constraints = getattr(context, "constraints", {}) or {}
         summary_request = constraints.get("summary_request") or {}
+        max_topics = self._requested_topic_count(summary_request, constraints)
+        min_papers = self._minimum_paper_count(constraints)
         categories = self._relevant_categories(summary_request)
         papers = self._filter_relevant_papers(
             constraints.get("selected_papers") or [],
@@ -89,14 +95,14 @@ class SpecializedAgent(BaseAgent):
 
         threshold = self.execute_tool(
             "check_threshold_tool",
-            {"paper_count": len(papers), "min_threshold": 1},
+            {"paper_count": len(papers), "min_threshold": min_papers},
         )
         if threshold.success and not threshold.result.get("threshold_met"):
-            fetched = self._fetch_relevant_papers(summary_request, categories)
+            fetched = self._fetch_relevant_papers(summary_request, categories, min_papers)
             if fetched:
                 papers = fetched
 
-        topic_result = self._discover_topics(papers, summary_request)
+        topic_result = self._discover_topics(papers, summary_request, max_topics)
         topic_summaries = self._summarize_topics(topic_result, papers, summary_request)
         response_text = self._render_specialist_response(topic_summaries, papers, topic_result)
 
@@ -104,6 +110,8 @@ class SpecializedAgent(BaseAgent):
             "agent": self.name,
             "response": response_text,
             "paper_count": len(papers),
+            "requested_topic_count": max_topics,
+            "minimum_paper_count": min_papers,
             "abstract_count": len([paper for paper in papers if self._paper_abstract(paper)]),
             "categories": categories,
             "topics": topic_result.get("topics", []),
@@ -114,7 +122,9 @@ class SpecializedAgent(BaseAgent):
     def can_handle_research_handoff(self, context: Any) -> bool:
         """Return whether the handoff has enough structure for the research workflow."""
         constraints = getattr(context, "constraints", {}) or {}
-        return bool(constraints.get("summary_request") or constraints.get("selected_papers"))
+        return self.uses_topic_workflow and bool(
+            constraints.get("summary_request") or constraints.get("selected_papers")
+        )
 
     def _relevant_categories(self, summary_request: Dict[str, Any]) -> List[str]:
         requested = list(summary_request.get("must_include_categories") or [])
@@ -141,6 +151,7 @@ class SpecializedAgent(BaseAgent):
         self,
         summary_request: Dict[str, Any],
         categories: List[str],
+        min_papers: int,
     ) -> List[Dict[str, Any]]:
         start_date, end_date = self._date_bounds(summary_request)
         result = self.execute_tool(
@@ -149,7 +160,7 @@ class SpecializedAgent(BaseAgent):
                 "categories": categories,
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
-                "min_count": 1,
+                "min_count": min_papers,
             },
         )
         if not result.success:
@@ -160,6 +171,7 @@ class SpecializedAgent(BaseAgent):
         self,
         papers: List[Dict[str, Any]],
         summary_request: Dict[str, Any],
+        max_topics: int,
     ) -> Dict[str, Any]:
         if not papers:
             return {"topics": [], "topic_count": 0, "paper_count": 0, "status": "no_papers"}
@@ -168,15 +180,16 @@ class SpecializedAgent(BaseAgent):
             {
                 "papers": papers,
                 "min_topic_size": max(2, min(5, len(papers))),
+                "num_topics": max_topics,
                 "representative_papers_per_topic": max(
                     1,
                     min(int(summary_request.get("max_papers") or 5), 5),
                 ),
-                "use_openai_representation": False,
+                "use_openai_representation": True,
             },
         )
         if result.success and isinstance(result.result, dict):
-            return result.result
+            return self._limit_topic_result(result.result, max_topics)
         return {
             "topics": [],
             "topic_count": 0,
@@ -221,10 +234,21 @@ class SpecializedAgent(BaseAgent):
             summaries.append(
                 {
                     "topic": topic.get("title") or "Discovered topic",
+                    "description": self._topic_description(topic),
+                    "description_source": topic.get("description_source"),
                     "paper_count": topic.get("paper_count", len(representative_papers)),
                     "keywords": topic.get("keywords", []),
                     "representative_papers": representative_papers,
                     "summary": summary.result if summary.success else {"error": summary.error},
+                    "main_results_and_importance": self._topic_main_results_and_importance(
+                        topic,
+                        summary.result if summary.success else {},
+                    ),
+                    "extra_information": {
+                        "topic_id": topic.get("topic_id"),
+                        "representation_text": topic.get("representation_text"),
+                        "description_source": topic.get("description_source"),
+                    },
                 }
             )
         return summaries
@@ -244,7 +268,7 @@ class SpecializedAgent(BaseAgent):
             f"{self.name} collected {len(papers)} abstracts and discovered "
             f"{topic_result.get('topic_count', len(topic_summaries))} topics."
         ]
-        for item in topic_summaries[:3]:
+        for item in topic_summaries:
             summary = item.get("summary", {})
             summary_text = summary.get("summary") if isinstance(summary, dict) else str(summary)
             titles = [
@@ -252,10 +276,56 @@ class SpecializedAgent(BaseAgent):
                 for paper in item.get("representative_papers", [])[:3]
             ]
             lines.append(
-                f"- {item['topic']}: {summary_text} "
+                f"- {item['topic']}: {item.get('description') or summary_text} "
                 f"Representative papers: {', '.join(titles)}."
             )
         return "\n".join(lines)
+
+    def _requested_topic_count(
+        self,
+        summary_request: Dict[str, Any],
+        constraints: Dict[str, Any],
+    ) -> int:
+        raw_value = constraints.get("max_topics") or summary_request.get("max_topics") or 3
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return 3
+
+    def _minimum_paper_count(self, constraints: Dict[str, Any]) -> int:
+        raw_value = constraints.get("min_papers") or DEFAULT_SPECIALIST_MIN_PAPERS
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return DEFAULT_SPECIALIST_MIN_PAPERS
+
+    def _limit_topic_result(
+        self,
+        topic_result: Dict[str, Any],
+        max_topics: int,
+    ) -> Dict[str, Any]:
+        limited = dict(topic_result)
+        topics = list(limited.get("topics") or [])[:max_topics]
+        limited["topics"] = topics
+        limited["topic_count"] = len(topics)
+        limited["requested_topic_count"] = max_topics
+        return limited
+
+    def _topic_description(self, topic: Dict[str, Any]) -> str:
+        description = topic.get("description") or topic.get("representation_text")
+        if description:
+            return str(description)
+        keywords = ", ".join(str(keyword) for keyword in topic.get("keywords", [])[:4])
+        return f"Topic centered on {keywords}." if keywords else "Discovered ArXiv topic."
+
+    def _topic_main_results_and_importance(
+        self,
+        topic: Dict[str, Any],
+        summary: Dict[str, Any],
+    ) -> str:
+        if isinstance(summary, dict) and summary.get("summary"):
+            return str(summary["summary"])
+        return self._topic_description(topic)
 
     def _date_bounds(self, summary_request: Dict[str, Any]) -> tuple[date, date]:
         date_range = summary_request.get("date_range") or {}
@@ -282,6 +352,8 @@ class SpecializedAgent(BaseAgent):
 
 class MichelAgent(SpecializedAgent):
     """Mathematics education agent focused on intuition and accessibility."""
+
+    uses_topic_workflow = False
 
     profile = AgentProfile(
         name="Michel",

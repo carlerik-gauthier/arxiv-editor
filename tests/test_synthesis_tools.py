@@ -1,10 +1,11 @@
 """Tests for phase-6.3 synthesis tools and first-draft workflow."""
 
-from src.agents import JeanBaptisteAgent, JuliusAgent, MichelAgent
+from src.agents import AgentTool, JeanBaptisteAgent, JuliusAgent, MichelAgent
 from src.agents.tools import (
     create_paper_summary_tool,
     create_topic_overview_tool,
     generate_layperson_explanation_tool,
+    generate_summary_tool,
     get_synthesis_tools,
     rank_summary_items_tool,
     review_and_refine_tool,
@@ -32,6 +33,63 @@ def _analysis():
         "impact_summary": "The result helps compare agent systems more reliably.",
         "confidence": "medium",
     }
+
+
+def _fast_specialist_tools():
+    """Return deterministic tools that avoid live ArXiv and BERTopic calls."""
+    def threshold_met(paper_count, min_threshold=60):
+        return {
+            "paper_count": paper_count,
+            "min_threshold": min_threshold,
+            "threshold_met": True,
+            "missing_count": 0,
+        }
+
+    def discover_topics(
+        papers,
+        min_topic_size=2,
+        num_topics=None,
+        representative_papers_per_topic=5,
+        use_openai_representation=True,
+    ):
+        paper_list = list(papers)
+        return {
+            "topics": [
+                {
+                    "title": "LLM Agent Planning",
+                    "description": "LLM-generated topic description.",
+                    "description_source": "llm",
+                    "keywords": ["agents", "planning"],
+                    "representative_papers": paper_list[:representative_papers_per_topic],
+                    "paper_count": len(paper_list),
+                }
+            ][: num_topics or 1],
+            "topic_count": 1,
+            "paper_count": len(paper_list),
+            "status": "completed",
+        }
+
+    return [
+        AgentTool(
+            name="check_threshold_tool",
+            description="Check paper threshold.",
+            function=threshold_met,
+            required_parameters=["paper_count", "min_threshold"],
+        ),
+        AgentTool(
+            name="discover_topics_tool",
+            description="Discover topics.",
+            function=discover_topics,
+            required_parameters=["papers"],
+        ),
+        AgentTool(
+            name="generate_summary_tool",
+            description="Summarize topic papers.",
+            function=generate_summary_tool,
+            required_parameters=["papers", "topic"],
+        ),
+        *get_synthesis_tools(),
+    ]
 
 
 def test_synthesis_tools_create_overviews_summaries_and_rankings():
@@ -83,9 +141,53 @@ def test_content_synthesizer_respects_request_format_and_provenance():
     assert draft["provenance"]["agent_callbacks"][0]["agent"] == "JeanBaptiste"
 
 
+def test_content_synthesizer_caps_specialist_topics_to_seven():
+    """Specialist topic callbacks are rendered with an absolute seven-topic cap."""
+    callbacks = [
+        {
+            "to_agent": "JeanBaptiste",
+            "status": "COMPLETED",
+            "result": {
+                "response": {
+                    "topic_summaries": [
+                        {
+                            "topic": f"Topic {index}",
+                            "description": f"Description {index}",
+                            "main_results_and_importance": f"Main results {index}",
+                            "representative_papers": [
+                                {
+                                    "title": f"Paper {index}",
+                                    "arxiv_id": f"2605.{index:05d}",
+                                }
+                            ],
+                        }
+                        for index in range(1, 10)
+                    ]
+                }
+            },
+        }
+    ]
+
+    draft = ContentSynthesizer().synthesize_draft(
+        summary_request=SummaryRequest(topic_query="LLM agents", max_topics=20),
+        selected_papers=[_paper()],
+        analyses=[_analysis()],
+        agent_results=callbacks,
+    )
+
+    assert len(draft["sections"]) == 21
+    assert "Topic 7" in draft["content"]
+    assert "Topic 8" not in draft["content"]
+
+
 def test_julius_generates_first_draft_with_specialist_handoff_provenance():
     """Julius delegates to matching specialists and compiles a first draft."""
-    julius = JuliusAgent(specialist_agents=[MichelAgent(), JeanBaptisteAgent()])
+    julius = JuliusAgent(
+        specialist_agents=[
+            MichelAgent(),
+            JeanBaptisteAgent(tools=_fast_specialist_tools()),
+        ]
+    )
     request = SummaryRequest(
         topic_query="LLM agents",
         must_include_categories=["cs.AI"],

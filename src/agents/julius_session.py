@@ -89,6 +89,7 @@ class JuliusSession:
         selected_papers: Optional[List[Dict[str, Any]]] = None,
         analyses: Optional[List[Dict[str, Any]]] = None,
         output_dir: str | Path = "outputs",
+        run_specialists_in_preview: bool = False,
     ) -> None:
         self.julius = julius or JuliusAgent()
         self.progress_callback = progress_callback
@@ -96,6 +97,7 @@ class JuliusSession:
         self.selected_papers = selected_papers or []
         self.analyses = analyses or []
         self.output_dir = Path(output_dir)
+        self.run_specialists_in_preview = run_specialists_in_preview
         self.state = JuliusSessionState.INTAKE
         self.conversation_history: List[Dict[str, Any]] = []
         self.current_request: Optional[SummaryRequest] = None
@@ -243,6 +245,7 @@ class JuliusSession:
             selected_papers=self.selected_papers,
             analyses=self.analyses,
             previous_feedback=self.user_feedback,
+            agent_names=None if self.run_specialists_in_preview else [],
         )
         self.emit_progress("Compiling the draft preview.")
 
@@ -291,6 +294,7 @@ class JuliusSession:
                     analyses=self.analyses,
                     previous_feedback=self.user_feedback,
                     draft_version=len(self.drafts) + 1,
+                    agent_names=None if self.run_specialists_in_preview else [],
                 )
                 draft = draft_result["draft"]
             else:

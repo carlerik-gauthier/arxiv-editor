@@ -27,6 +27,9 @@ from src.agents.tools.formatting_tool import get_formatting_tool
 from src.agents.tools.quality_check_tool import get_quality_check_tool
 
 
+MAX_TOPICS_PER_RESPONSE = 7
+
+
 class WorkflowState(str, Enum):
     """High-level states for Julius's editorial workflow."""
 
@@ -222,6 +225,7 @@ class JuliusAgent(BaseAgent):
             system_prompt=system_prompt or self._build_julius_system_prompt(),
             tools=self._build_coordination_tools(),
         )
+        self._register_specialists_as_sdk_tools()
         self._record_state(self.workflow_state)
 
     def _build_julius_system_prompt(self) -> str:
@@ -304,6 +308,18 @@ class JuliusAgent(BaseAgent):
             get_quality_check_tool(),
         ]
 
+    def _register_specialists_as_sdk_tools(self) -> None:
+        """Expose specialists to Julius's SDK agent using the manager pattern."""
+        for agent in self.specialist_agents.values():
+            self.register_sdk_tool(
+                agent.as_sdk_tool(
+                    tool_name=f"{_normalize_agent_name(agent.name).lower()}_agent",
+                    tool_description=(
+                        f"Delegate research analysis to {agent.name}: {agent.expertise}."
+                    ),
+                )
+            )
+
     def parse_user_request_tool(
         self,
         message: str,
@@ -347,8 +363,11 @@ class JuliusAgent(BaseAgent):
         asked to review the request and lets ContentSynthesizer render the draft.
         """
         request = SummaryRequest.model_validate(summary_request)
-        selected_agents = agent_names or self._select_agents_for_summary_request(request)
-        self._transition_to(WorkflowState.PLANNING)
+        selected_agents = (
+            self._select_agents_for_summary_request(request)
+            if agent_names is None
+            else list(agent_names)
+        )
         parsed_request = {
             "raw_request": request.topic_query or "ArXiv research summary",
             "date_range": request.date_range.model_dump(mode="json"),
@@ -356,15 +375,24 @@ class JuliusAgent(BaseAgent):
             "preferences": request.model_dump(mode="json"),
             "summary_request": request.model_dump(mode="json"),
         }
+        topic_budget = self._requested_max_topics(parsed_request)
+        topic_allocations = self._allocate_topic_budget(selected_agents, topic_budget)
+        self._transition_to(WorkflowState.PLANNING)
         plan = self.create_execution_plan(parsed_request, agent_names=selected_agents)
 
         self._transition_to(WorkflowState.DELEGATING)
         for assignment in plan["assignments"]:
             assignment["constraints"]["summary_request"] = request.model_dump(mode="json")
             assignment["constraints"]["selected_papers"] = selected_papers or []
+            if assignment["agent_name"] in topic_allocations:
+                assignment["constraints"]["max_topics"] = topic_allocations[assignment["agent_name"]]
             self._execute_coordination_tool("delegate_to_agent_tool", assignment)
 
-        if request.audience in {Audience.NON_EXPERT, Audience.MIXED} and "Michel" not in selected_agents:
+        if (
+            selected_agents
+            and request.audience in {Audience.NON_EXPERT, Audience.MIXED}
+            and "Michel" not in selected_agents
+        ):
             self._execute_coordination_tool(
                 "delegate_to_agent_tool",
                 {
@@ -474,7 +502,11 @@ class JuliusAgent(BaseAgent):
         """
         selected_agent_names = [
             self._resolve_agent_name(agent_name)
-            for agent_name in (agent_names or self.specialist_agents.keys())
+            for agent_name in (
+                self.specialist_agents.keys()
+                if agent_names is None
+                else agent_names
+            )
         ]
         assignments = [
             {
@@ -491,6 +523,13 @@ class JuliusAgent(BaseAgent):
             }
             for agent_name in selected_agent_names
         ]
+
+        topic_budget = self._requested_max_topics(parsed_request)
+        topic_allocations = self._allocate_topic_budget(selected_agent_names, topic_budget)
+        for assignment in assignments:
+            agent_name = assignment["agent_name"]
+            if agent_name in topic_allocations:
+                assignment["constraints"]["max_topics"] = topic_allocations[agent_name]
 
         return {
             "request": parsed_request,
@@ -664,6 +703,16 @@ class JuliusAgent(BaseAgent):
         the same structured output fields for Julius's workflow.
         """
         normalized_results = self._normalize_agent_results(agent_results)
+        topic_sections = self._topic_sections_from_agent_results(normalized_results)
+        if topic_sections:
+            return {
+                "title": title,
+                "content": "\n\n".join([f"# {title}", *topic_sections]),
+                "completed_sections": len(topic_sections),
+                "failed_sections": 0,
+                "status": "compiled",
+            }
+
         completed_sections: List[str] = []
         failed_sections: List[str] = []
 
@@ -779,10 +828,44 @@ class JuliusAgent(BaseAgent):
     ) -> str:
         """Build a concrete specialist task for an execution plan."""
         topics = parsed_request.get("topics") or ["your assigned categories"]
+        max_topics = self._requested_max_topics(parsed_request)
+        topic_budget = min(max_topics, MAX_TOPICS_PER_RESPONSE)
         return (
             f"Review recent ArXiv work in {', '.join(agent.categories)} for "
-            f"{', '.join(topics)}. User request: {parsed_request['raw_request']}"
+            f"{', '.join(topics)}. Return at most {topic_budget} topics with "
+            "a topic name, description, main results and importance, and "
+            f"representative papers. User request: {parsed_request['raw_request']}"
         )
+
+    def _requested_max_topics(self, parsed_request: Dict[str, Any]) -> int:
+        preferences = parsed_request.get("preferences") or {}
+        summary_request = parsed_request.get("summary_request") or {}
+        raw_value = preferences.get("max_topics") or summary_request.get("max_topics") or 3
+        try:
+            return min(MAX_TOPICS_PER_RESPONSE, max(1, int(raw_value)))
+        except (TypeError, ValueError):
+            return min(MAX_TOPICS_PER_RESPONSE, 3)
+
+    def _allocate_topic_budget(
+        self,
+        agent_names: Iterable[str],
+        total_topics: int,
+    ) -> Dict[str, int]:
+        """Distribute a bounded topic budget across topic-capable specialists."""
+        topic_agents = [
+            self._resolve_agent_name(agent_name)
+            for agent_name in agent_names
+            if self.specialist_agents[self._resolve_agent_name(agent_name)].uses_topic_workflow
+        ]
+        if not topic_agents or total_topics <= 0:
+            return {}
+
+        topic_agents = topic_agents[: min(total_topics, len(topic_agents))]
+        base, remainder = divmod(total_topics, len(topic_agents))
+        allocations: Dict[str, int] = {}
+        for index, agent_name in enumerate(topic_agents):
+            allocations[agent_name] = base + (1 if index < remainder else 0)
+        return allocations
 
     def _select_agents_for_summary_request(self, request: SummaryRequest) -> List[str]:
         """Select specialists from category filters and topic keywords."""
@@ -829,6 +912,36 @@ class JuliusAgent(BaseAgent):
             return list(agent_results)
         raise TypeError("agent_results must be collect_agent_results_tool output or a list")
 
+    def _topic_sections_from_agent_results(
+        self,
+        callbacks: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Render completed specialist topic summaries in Julius's required pattern."""
+        sections: List[str] = []
+        topic_index = 1
+        for callback in callbacks:
+            if callback.get("status") != AgentTaskStatus.COMPLETED.value:
+                continue
+            response = callback.get("result", {}).get("response", {})
+            if not isinstance(response, dict):
+                continue
+            for topic in response.get("topic_summaries") or []:
+                if topic_index > MAX_TOPICS_PER_RESPONSE:
+                    return sections
+                name = topic.get("topic") or f"Topic {topic_index}"
+                description = topic.get("description") or _stringify_summary(topic)
+                main_results = topic.get("main_results_and_importance") or _stringify_summary(topic)
+                references = _format_topic_references(topic.get("representative_papers") or [])
+                sections.extend(
+                    [
+                        f"## Topic {topic_index}: {name} + Description\n{description}",
+                        f"## Topic {topic_index} Main Results and Importance\n{main_results}",
+                        f"## References for Topic {topic_index}\n{references}",
+                    ]
+                )
+                topic_index += 1
+        return sections
+
     def _resolve_agent_name(self, agent_name: str) -> str:
         """Resolve user-facing specialist names to registered canonical names."""
         normalized_name = _normalize_agent_name(agent_name)
@@ -864,3 +977,19 @@ def _format_handoff_prompt(from_agent_name: str, context: HandoffContext) -> str
 def _normalize_agent_name(agent_name: str) -> str:
     """Normalize agent names for case-insensitive and punctuation-insensitive lookup."""
     return "".join(character for character in agent_name.lower() if character.isalnum())
+
+
+def _stringify_summary(topic: Dict[str, Any]) -> str:
+    summary = topic.get("summary")
+    if isinstance(summary, dict):
+        return str(summary.get("summary") or summary)
+    return str(summary or "Specialist summary pending.")
+
+
+def _format_topic_references(papers: Iterable[Dict[str, Any]]) -> str:
+    lines = []
+    for paper in papers:
+        title = str(paper.get("title") or "Untitled paper")
+        arxiv_id = paper.get("arxiv_id") or paper.get("id")
+        lines.append(f"- {title} ({arxiv_id})" if arxiv_id else f"- {title}")
+    return "\n".join(lines) if lines else "- Representative papers pending."
