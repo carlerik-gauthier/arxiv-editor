@@ -249,4 +249,6 @@ def test_specialized_handoff_fetches_topics_and_summarizes_representatives():
     assert response["minimum_paper_count"] == DEFAULT_SPECIALIST_MIN_PAPERS
     assert response["topic_summaries"][0]["topic"] == "Language Agent Planning"
     assert response["topic_summaries"][0]["description_source"] == "llm"
+    assert response["topic_summaries"][0]["importance"] == 2
+    assert "Importance: 2 papers." in response["topic_summaries"][0]["main_results_and_importance"]
     assert "Representative papers" in response["response"]

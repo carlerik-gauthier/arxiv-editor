@@ -1,8 +1,11 @@
 """Tests for the step-6.6 Streamlit backend workflow."""
 
+from contextlib import contextmanager
+
 from src.agents import AgentTool, JeanBaptisteAgent, JuliusAgent, JuliusSession
 from src.agents.tools import check_threshold_tool, generate_summary_tool
 from src.generation.interactive_workflow import InteractiveSummaryWorkflow
+from src.ui import streamlit_app
 from src.ui.streamlit_app import (
     append_chat_result,
     apply_output_preferences_to_message,
@@ -261,6 +264,40 @@ def test_ui_chat_auto_generates_after_complete_initial_request():
         "assistant",
         "assistant",
     ]
+
+
+def test_ui_chat_turn_opens_a_trace_before_generating_draft(monkeypatch):
+    """Streamlit opens a top-level trace so first-turn subspans have a parent trace."""
+    events = []
+
+    @contextmanager
+    def fake_trace_workflow(name, metadata=None):
+        events.append(("start", name, metadata))
+        yield object()
+        events.append(("end", name))
+
+    monkeypatch.setattr(streamlit_app.openai_tracing, "trace_workflow", fake_trace_workflow)
+
+    state = {"messages": []}
+    workflow = build_smoke_workflow()
+    process_chat_input(
+        _FakeStreamlit(),
+        state,
+        workflow,
+        "Give me a mixed audience summary of LLM agents",
+    )
+
+    assert events[0][0] == "start"
+    assert events[0][1] == "Streamlit Julius chat turn"
+    assert events[-1] == ("end", "Streamlit Julius chat turn")
+
+
+def test_ensure_workflow_state_enables_specialists_in_preview_by_default():
+    """The Streamlit app should delegate to specialists on the first draft preview."""
+    state = {}
+    workflow = ensure_workflow_state(state)
+
+    assert workflow.session.run_specialists_in_preview is True
 
 
 def test_ui_chat_applies_sidebar_output_preferences_to_initial_request():

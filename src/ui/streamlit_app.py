@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, MutableMapping
 
 from src.agents import AgentTool, JeanBaptisteAgent, JuliusAgent, JuliusSession, MichelAgent
+from src.agents import openai_tracing
 from src.agents.tools import format_document_tool, generate_summary_tool
 from src.generation.interactive_workflow import InteractiveSummaryWorkflow
 
@@ -20,7 +21,9 @@ def ensure_workflow_state(
 ) -> InteractiveSummaryWorkflow:
     """Initialize persistent Streamlit state without overwriting rerun data."""
     if "workflow" not in session_state:
-        session_state["workflow"] = workflow or InteractiveSummaryWorkflow()
+        session_state["workflow"] = workflow or InteractiveSummaryWorkflow(
+            julius_session=JuliusSession(run_specialists_in_preview=True)
+        )
     session_state.setdefault("messages", [])
     session_state.setdefault("draft_versions", {})
     session_state.setdefault("validation_reports", [])
@@ -183,19 +186,26 @@ def process_chat_input(
     output_preferences: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Handle one chat turn and auto-start draft generation when ready."""
-    julius_message = apply_output_preferences_to_message(
-        user_message,
-        output_preferences,
-        workflow,
-    )
-    result = workflow.handle_message(julius_message)
-    append_chat_result(session_state, user_message, result)
-    if should_auto_generate_draft(result, workflow):
-        with st.status("Julius is generating the draft", expanded=False):
-            result = workflow.generate_draft()
-        append_chat_result(session_state, None, result)
-    sync_session_state(session_state, workflow)
-    return result
+    trace_metadata = {
+        "trace_agent": "Streamlit",
+        "workflow_state": workflow.session.state.value,
+        "has_output_preferences": bool(output_preferences),
+        "user_message": user_message,
+    }
+    with openai_tracing.trace_workflow("Streamlit Julius chat turn", metadata=trace_metadata):
+        julius_message = apply_output_preferences_to_message(
+            user_message,
+            output_preferences,
+            workflow,
+        )
+        result = workflow.handle_message(julius_message)
+        append_chat_result(session_state, user_message, result)
+        if should_auto_generate_draft(result, workflow):
+            with st.status("Julius is generating the draft", expanded=False):
+                result = workflow.generate_draft()
+            append_chat_result(session_state, None, result)
+        sync_session_state(session_state, workflow)
+        return result
 
 
 def apply_output_preferences_to_message(
@@ -263,18 +273,30 @@ def render_action_buttons(
     """Render explicit action buttons for expensive workflow steps."""
     col1, col2, col3 = st.columns(3)
     if col1.button("Generate draft"):
-        with st.status("Generating draft", expanded=False):
-            result = workflow.generate_draft()
+        with openai_tracing.trace_workflow(
+            "Streamlit Julius generate draft",
+            metadata={"trace_agent": "Streamlit", "action": "generate_draft"},
+        ):
+            with st.status("Generating draft", expanded=False):
+                result = workflow.generate_draft()
         append_chat_result(session_state, "Generate draft", result)
         sync_session_state(session_state, workflow)
         st.rerun()
     if col2.button("Validate"):
-        result = workflow.validate_current_draft()
+        with openai_tracing.trace_workflow(
+            "Streamlit Julius validate draft",
+            metadata={"trace_agent": "Streamlit", "action": "validate_draft"},
+        ):
+            result = workflow.validate_current_draft()
         append_chat_result(session_state, "Validate draft", result)
         sync_session_state(session_state, workflow)
         st.rerun()
     if col3.button("Finalize"):
-        result = workflow.finalize()
+        with openai_tracing.trace_workflow(
+            "Streamlit Julius finalize draft",
+            metadata={"trace_agent": "Streamlit", "action": "finalize"},
+        ):
+            result = workflow.finalize()
         append_chat_result(session_state, "Finalize", result)
         sync_session_state(session_state, workflow)
         st.rerun()

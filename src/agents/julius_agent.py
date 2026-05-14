@@ -244,6 +244,7 @@ class JuliusAgent(BaseAgent):
             "Use coordination tools when you need to delegate, request a date-range "
             "extension, collect specialist callbacks, compile the one-pager, or "
             "send the final result."
+            "RULE: you never fetch paper from Arxiv by yourself."
         )
 
     def _build_coordination_tools(self) -> List[AgentTool]:

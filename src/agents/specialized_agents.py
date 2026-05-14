@@ -237,6 +237,7 @@ class SpecializedAgent(BaseAgent):
                     "description": self._topic_description(topic),
                     "description_source": topic.get("description_source"),
                     "paper_count": topic.get("paper_count", len(representative_papers)),
+                    "importance": topic.get("paper_count", len(representative_papers)),
                     "keywords": topic.get("keywords", []),
                     "representative_papers": representative_papers,
                     "summary": summary.result if summary.success else {"error": summary.error},
@@ -323,9 +324,11 @@ class SpecializedAgent(BaseAgent):
         topic: Dict[str, Any],
         summary: Dict[str, Any],
     ) -> str:
+        paper_count = int(topic.get("paper_count", 0) or 0)
         if isinstance(summary, dict) and summary.get("summary"):
-            return str(summary["summary"])
-        return self._topic_description(topic)
+            return f"{summary['summary']} Importance: {paper_count} papers."
+        description = self._topic_description(topic)
+        return f"{description} Importance: {paper_count} papers."
 
     def _date_bounds(self, summary_request: Dict[str, Any]) -> tuple[date, date]:
         date_range = summary_request.get("date_range") or {}

@@ -17,4 +17,4 @@
 -- references for topic 3
 -- etc
 
-create_paper_summary_tool in synthesis_tools.py 
+test: make a summary about probability research papers from the last month

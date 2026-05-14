@@ -206,3 +206,4 @@ def test_julius_generates_first_draft_with_specialist_handoff_provenance():
     assert "generate_first_draft_tool" in julius.list_tools()
     assert "create_topic_overview_tool" in julius.specialist_agents["JeanBaptiste"].list_tools()
     assert result["draft"]["provenance"]["selected_papers"][0]["title"] == "Agent Planning Benchmarks"
+
