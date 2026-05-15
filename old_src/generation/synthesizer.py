@@ -11,13 +11,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from src.agents.tools.synthesis_tools import (
+from old_src.agents.tools.synthesis_tools import (
     create_paper_summary_tool,
     create_topic_overview_tool,
     rank_summary_items_tool,
     review_and_refine_tool,
 )
-from src.generation.user_request import Audience, SummaryFormat, SummaryRequest
+from old_src.generation.user_request import Audience, SummaryFormat, SummaryRequest
 
 
 MAX_TOPICS_PER_RESPONSE = 7
