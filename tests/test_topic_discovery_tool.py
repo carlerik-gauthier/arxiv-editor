@@ -158,7 +158,7 @@ def test_topic_modeler_extracts_topics_with_representative_papers():
         "score": 0.8,
     }
     assert "representation_text" in result["topics"][0]
-    assert len(result["topics"][0]["representative_papers"]) == 5
+    assert len(result["topics"][0]["representative_papers"]) == 3
     assert result["topics"][1]["keywords"] == ["markov", "chains", "mixing"]
 
 
@@ -216,6 +216,43 @@ def test_discover_topics_tool_uses_injected_modeler():
     assert result["topics"][0]["representative_papers"][0]["arxiv_id"].startswith("cs-")
 
 
+def test_discover_topics_tool_forwards_openai_client(monkeypatch):
+    """The wrapper forwards an injected OpenAI client into TopicModeler."""
+    captured = {}
+
+    class CapturingTopicModeler:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def extract_topics(
+            self,
+            papers,
+            min_topic_size=5,
+            num_topics=None,
+            representative_papers_per_topic=3,
+            batch_size=32,
+        ):
+            return {
+                "topics": [],
+                "topic_count": 0,
+                "paper_count": len(list(papers)),
+                "outlier_count": 0,
+                "status": "completed",
+                "progress": [],
+            }
+
+    fake_client = FakeOpenAIClient("Topic label")
+    monkeypatch.setattr("src.agents.tools.topic_discovery_tool.TopicModeler", CapturingTopicModeler)
+
+    discover_topics_tool(
+        papers=_make_papers(5),
+        min_topic_size=3,
+        openai_client=fake_client,
+    )
+
+    assert captured["openai_client"] is fake_client
+
+
 def test_discover_topics_tool_returns_failure_payload_for_bad_input():
     """Tool-level error handling returns a structured failure instead of raising."""
     result = discover_topics_tool(papers=[], topic_modeler=TopicModeler(embedder=FakeEmbedder()))
@@ -234,7 +271,7 @@ def test_generate_topic_title_tool_uses_heuristic_and_llm_paths():
     llm = generate_topic_title_tool(
         topic_keywords=["language", "agents"],
         sample_papers=[{"title": "Planning with Language Agents"}],
-        llm_client=lambda prompt: "Language Agent Planning",
+        llm_client=FakeOpenAIClient("Language Agent Planning"),
     )
 
     assert heuristic == {

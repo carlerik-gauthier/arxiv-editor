@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from src.agents.base_agent import AgentTool
 from src.generation.formatter import DocumentFormatter
@@ -12,7 +12,7 @@ def format_document_tool(
     content: Dict[str, Any],
     output_format: str = "markdown",
     style: str = "professional",
-    template_name: str | None = None,
+    template_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Format a draft as Markdown, HTML, or PDF-ready bytes."""
     formatter = DocumentFormatter()

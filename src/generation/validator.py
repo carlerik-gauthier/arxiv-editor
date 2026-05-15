@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.generation.user_request import Audience, SummaryFormat, SummaryRequest
@@ -27,8 +28,10 @@ class DocumentValidator:
             missing.append("document")
         if request.topic_query and request.topic_query.lower() not in text.lower():
             warnings.append("Requested topic is not visible in the document.")
-        if "Representative Papers" not in text and request.format != SummaryFormat.BULLET_DIGEST:
-            warnings.append("Representative paper section is missing.")
+        if request.format != SummaryFormat.BULLET_DIGEST and not _has_reference_sections(text):
+            warnings.append("Topic reference sections are missing.")
+        if request.format != SummaryFormat.BULLET_DIGEST and not _has_julius_topic_pattern(text):
+            warnings.append("Julius topic blocks are incomplete.")
         if papers and not _all_papers_cited(text, papers):
             warnings.append("One or more source papers are not cited by title or ArXiv id.")
         if request.audience == Audience.NON_EXPERT and any(word in text.lower() for word in ("lemma", "theorem")):
@@ -88,3 +91,23 @@ def _all_papers_cited(text: str, papers: List[Dict[str, Any]]) -> bool:
             continue
         return False
     return True
+
+
+def _has_reference_sections(text: str) -> bool:
+    """Accept either Julius topic references or legacy representative-paper sections."""
+    return "Representative Papers" in text or bool(
+        re.search(r"^## Topic \d+ Reference$", text, flags=re.MULTILINE)
+    )
+
+
+def _has_julius_topic_pattern(text: str) -> bool:
+    """Detect Julius's required repeated topic block structure."""
+    if "Topic Overview" in text:
+        return False
+    has_title = bool(re.search(r"^## Topic \d+ Title$", text, flags=re.MULTILINE))
+    has_description = bool(re.search(r"^## Topic \d+ Description$", text, flags=re.MULTILINE))
+    has_main_results = bool(
+        re.search(r"^## Topic \d+ Main Results and Importance$", text, flags=re.MULTILINE)
+    )
+    has_references = bool(re.search(r"^## Topic \d+ Reference$", text, flags=re.MULTILINE))
+    return has_title and has_description and has_main_results and has_references

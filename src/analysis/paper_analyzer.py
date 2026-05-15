@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from src.openai_client import default_openai_model, resolve_openai_client
+
 
 DEFAULT_MAX_CHUNK_TOKENS = 1800
 DEFAULT_SECTION_SCAN_CHARS = 20000
@@ -15,10 +17,10 @@ class PaperAnalyzer:
     """
     Analyze full paper text and metadata for editorial agent workflows.
 
-    The analyzer is intentionally provider-agnostic. When `llm_client` is
-    supplied, problem extraction calls a common completion/generation method and
-    normalizes the response. Without an LLM, the same public contract is filled
-    by deterministic section and keyword heuristics so tests and local workflows
+    The analyzer is deterministic by default. When an OpenAI client is
+    supplied, problem extraction calls the OpenAI API and normalizes the
+    response. Without an LLM, the same public contract is filled by
+    deterministic section and keyword heuristics so tests and local workflows
     remain stable.
     """
 
@@ -31,8 +33,8 @@ class PaperAnalyzer:
         Initialize a paper analyzer.
 
         Args:
-            llm_client: Optional callable or client object exposing
-                `complete`, `generate`, `chat`, or `invoke`.
+            llm_client: Optional OpenAI client exposing `responses.create` or
+                `chat.completions.create`.
             max_chunk_tokens: Approximate token budget used by `chunk_text`.
 
         Raises:
@@ -40,7 +42,11 @@ class PaperAnalyzer:
         """
         if max_chunk_tokens < 100:
             raise ValueError("max_chunk_tokens must be at least 100")
-        self.llm_client = llm_client
+        self.llm_client = (
+            resolve_openai_client(llm_client, required=True)
+            if llm_client is not None
+            else None
+        )
         self.max_chunk_tokens = max_chunk_tokens
 
     def extract_problem_statement(
@@ -801,14 +807,29 @@ def _build_impact_prompt(
 
 
 def _call_llm_client(llm_client: Any, prompt: str) -> Any:
-    """Call a common LLM client shape and return its raw response."""
-    if callable(llm_client):
-        return llm_client(prompt)
-    for method_name in ("complete", "generate", "chat", "invoke"):
-        method = getattr(llm_client, method_name, None)
-        if callable(method):
-            return method(prompt)
-    raise TypeError("llm_client must be callable or expose complete/generate/chat/invoke")
+    """Call an OpenAI client and return its raw response."""
+    client = resolve_openai_client(llm_client, required=True)
+
+    responses_api = getattr(client, "responses", None)
+    create_method = getattr(responses_api, "create", None)
+    if callable(create_method):
+        return create_method(
+            model=getattr(client, "model", default_openai_model()),
+            input=prompt,
+        )
+
+    chat_api = getattr(client, "chat", None)
+    completions_api = getattr(chat_api, "completions", None)
+    create_method = getattr(completions_api, "create", None)
+    if callable(create_method):
+        return create_method(
+            model=getattr(client, "model", default_openai_model()),
+            messages=[{"role": "user", "content": prompt}],
+        )
+    raise TypeError(
+        "llm_client must be an OpenAI client exposing responses.create or "
+        "chat.completions.create"
+    )
 
 
 def _parse_llm_problem_response(response: Any) -> Dict[str, Any]:
@@ -823,6 +844,9 @@ def _parse_llm_problem_response(response: Any) -> Dict[str, Any]:
             if "content" in response and len(response) <= 3:
                 return _parse_llm_problem_response(response["content"])
             return dict(response)
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str):
+        return _parse_llm_problem_response(output_text)
     if hasattr(response, "model_dump"):
         return _parse_llm_problem_response(response.model_dump())
     if hasattr(response, "choices"):
@@ -843,6 +867,13 @@ def _parse_llm_problem_response(response: Any) -> Dict[str, Any]:
         return {"problem": text, "confidence": "llm_unstructured"}
     if not isinstance(parsed, dict):
         return {"problem": text, "confidence": "llm_unstructured"}
+    if "choices" in parsed:
+        return _parse_llm_problem_response(parsed["choices"][0])
+    message = parsed.get("message")
+    if isinstance(message, dict) and "content" in message:
+        return _parse_llm_problem_response(message["content"])
+    if "content" in parsed and len(parsed) <= 3:
+        return _parse_llm_problem_response(parsed["content"])
     return parsed
 
 

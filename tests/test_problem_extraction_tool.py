@@ -25,6 +25,27 @@ We construct a coupling argument.
 """.strip()
 
 
+class _FakeOpenAIClient:
+    """Minimal OpenAI-compatible client for paper-analysis tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.prompts = []
+        self.responses = self
+
+    def create(self, model, input):
+        self.prompts.append({"model": model, "input": input})
+
+        class Response:
+            pass
+
+        response = Response()
+        response.output_text = (
+            self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        )
+        return response
+
+
 def test_paper_analyzer_extracts_sections_and_problem_fields():
     """PaperAnalyzer extracts documented problem fields from paper text."""
     analyzer = PaperAnalyzer()
@@ -75,52 +96,50 @@ def test_chunk_text_uses_configurable_token_budget():
 
 def test_extract_problem_statement_uses_injected_llm_client():
     """An injected LLM client can provide structured problem extraction."""
-    captured = {}
+    client = _FakeOpenAIClient(
+        {
+            "problem": "How can adaptive chains be certified?",
+            "motivation": "Certification matters for Bayesian computation.",
+            "research_gap": "Finite-time guarantees are missing.",
+            "context": "Probability theory",
+            "evidence": ["The introduction states the certification gap."],
+            "confidence": "high",
+        }
+    )
 
-    def fake_llm(prompt):
-        captured["prompt"] = prompt
-        return json.dumps(
-            {
-                "problem": "How can adaptive chains be certified?",
-                "motivation": "Certification matters for Bayesian computation.",
-                "research_gap": "Finite-time guarantees are missing.",
-                "context": "Probability theory",
-                "evidence": ["The introduction states the certification gap."],
-                "confidence": "high",
-            }
-        )
-
-    analyzer = PaperAnalyzer(llm_client=fake_llm)
+    analyzer = PaperAnalyzer(llm_client=client)
 
     result = analyzer.extract_problem_statement(PAPER_TEXT, {"title": "Adaptive chains"})
 
     assert result["source"] == "llm"
     assert result["confidence"] == "high"
     assert result["problem"] == "How can adaptive chains be certified?"
-    assert "Return strict JSON" in captured["prompt"]
+    assert "Return strict JSON" in client.prompts[0]["input"]
 
 
 def test_extract_problem_statement_parses_chat_completion_shape():
     """LLM parsing accepts common chat-completion response dictionaries."""
     analyzer = PaperAnalyzer(
-        llm_client=lambda _prompt: {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "problem": "Which finite-time guarantee is possible?",
-                                "motivation": "Adaptive sampling needs certificates.",
-                                "research_gap": "Existing bounds are limited.",
-                                "context": "Markov chain theory",
-                                "evidence": [],
-                                "confidence": "medium",
-                            }
-                        )
+        llm_client=_FakeOpenAIClient(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "problem": "Which finite-time guarantee is possible?",
+                                    "motivation": "Adaptive sampling needs certificates.",
+                                    "research_gap": "Existing bounds are limited.",
+                                    "context": "Markov chain theory",
+                                    "evidence": [],
+                                    "confidence": "medium",
+                                }
+                            )
+                        }
                     }
-                }
-            ]
-        }
+                ]
+            }
+        )
     )
 
     result = analyzer.extract_problem_statement(PAPER_TEXT)

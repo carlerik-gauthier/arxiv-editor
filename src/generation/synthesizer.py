@@ -17,7 +17,8 @@ from src.agents.tools.synthesis_tools import (
     rank_summary_items_tool,
     review_and_refine_tool,
 )
-from src.generation.user_request import Audience, SummaryFormat, SummaryRequest
+from src.generation.user_request import SummaryFormat, SummaryRequest
+from src.processing.topic_modeler import MAX_REPRESENTATIVE_PAPERS_PER_TOPIC
 
 
 MAX_TOPICS_PER_RESPONSE = 7
@@ -121,44 +122,13 @@ class ContentSynthesizer:
             callbacks,
             min(request.max_topics, MAX_TOPICS_PER_RESPONSE),
         )
-        if specialist_topics:
-            return _topic_sections(specialist_topics)
-
-        sections = [
-            {
-                "title": "Topic Overview",
-                "content": overview["overview"],
-                "confidence_notes": overview["confidence_notes"],
-            }
-        ]
-        if paper_summaries:
-            sections.append(
-                {
-                    "title": "Representative Papers",
-                    "content": paper_summaries[: request.max_papers],
-                }
+        if not specialist_topics:
+            specialist_topics = _fallback_topic_summaries(
+                request=request,
+                overview=overview,
+                paper_summaries=paper_summaries,
             )
-        if callbacks:
-            sections.append(
-                {
-                    "title": "Specialist Notes",
-                    "content": [
-                        {
-                            "agent": callback.get("to_agent") or callback.get("agent"),
-                            "status": callback.get("status"),
-                        }
-                        for callback in callbacks
-                    ],
-                }
-            )
-        if request.audience in {Audience.NON_EXPERT, Audience.MIXED}:
-            sections.append(
-                {
-                    "title": "Accessible Explanation",
-                    "content": "Michel review requested for intuition and terminology.",
-                }
-            )
-        return sections
+        return _topic_sections(specialist_topics)
 
     def _render_content(
         self,
@@ -169,21 +139,6 @@ class ContentSynthesizer:
     ) -> str:
         """Render sections into the requested markdown-style format."""
         heading = f"# Draft v{draft_version}: {self._title_for(request, topic)}"
-        if request.format == SummaryFormat.BULLET_DIGEST:
-            lines = [heading]
-            for section in sections:
-                lines.append(f"- {section['title']}: {_stringify_section(section['content'])}")
-            return "\n".join(lines)
-        if request.format == SummaryFormat.PAPER_RANKINGS:
-            papers = next(
-                (section["content"] for section in sections if section["title"] == "Representative Papers"),
-                [],
-            )
-            lines = [heading]
-            for index, paper in enumerate(papers, start=1):
-                lines.append(f"{index}. {paper['title']}: {paper['main_result']}")
-            return "\n".join(lines)
-
         lines = [heading]
         for section in sections:
             lines.append(f"## {section['title']}")
@@ -246,7 +201,12 @@ def _extract_specialist_topics(
         if not isinstance(response, dict):
             continue
         for topic in response.get("topic_summaries") or []:
-            topics.append(dict(topic))
+            normalized_topic = dict(topic)
+            representative_papers = list(normalized_topic.get("representative_papers") or [])
+            normalized_topic["representative_papers"] = representative_papers[
+                :MAX_REPRESENTATIVE_PAPERS_PER_TOPIC
+            ]
+            topics.append(normalized_topic)
             if len(topics) >= max_topics:
                 return topics
     return topics
@@ -260,7 +220,11 @@ def _topic_sections(topics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         sections.extend(
             [
                 {
-                    "title": f"Topic {index}: {name} + Description",
+                    "title": f"Topic {index} Title",
+                    "content": name,
+                },
+                {
+                    "title": f"Topic {index} Description",
                     "content": topic.get("description") or _summary_text(topic),
                 },
                 {
@@ -268,12 +232,71 @@ def _topic_sections(topics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "content": topic.get("main_results_and_importance") or _summary_text(topic),
                 },
                 {
-                    "title": f"References for Topic {index}",
+                    "title": f"Topic {index} Reference",
                     "content": _topic_references(topic),
                 },
             ]
         )
     return sections
+
+
+def _fallback_topic_summaries(
+    request: SummaryRequest,
+    overview: Dict[str, Any],
+    paper_summaries: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build a Julius-owned topic block when specialists did not return topics."""
+    topic_name = str(
+        overview.get("topic")
+        or request.topic_query
+        or _topic_from_categories(request)
+        or "Recent ArXiv research"
+    )
+    representative_papers = [
+        {
+            "title": paper.get("title"),
+            "arxiv_id": paper.get("arxiv_id"),
+            "id": paper.get("id"),
+        }
+        for paper in paper_summaries[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]
+    ]
+    return [
+        {
+            "topic": topic_name,
+            "description": overview.get("overview") or f"Recent work clusters around {topic_name}.",
+            "main_results_and_importance": _fallback_main_results_text(
+                topic_name=topic_name,
+                paper_summaries=paper_summaries,
+                confidence_notes=overview.get("confidence_notes") or [],
+            ),
+            "representative_papers": representative_papers,
+        }
+    ]
+
+
+def _fallback_main_results_text(
+    topic_name: str,
+    paper_summaries: List[Dict[str, Any]],
+    confidence_notes: List[str],
+) -> str:
+    """Summarize the strongest paper-level findings for Julius's final topic block."""
+    lines: List[str] = []
+    for paper in paper_summaries[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]:
+        title = str(paper.get("title") or "Untitled paper")
+        main_result = str(paper.get("main_result") or "Main result pending.")
+        significance = str(paper.get("significance") or "").strip()
+        line = f"- {title}: {main_result}"
+        if significance and significance != main_result:
+            line += f" Importance: {significance}"
+        lines.append(line)
+
+    if not lines:
+        lines.append(f"- Julius did not receive representative paper summaries for {topic_name} yet.")
+
+    if confidence_notes:
+        lines.append(f"- Confidence notes: {'; '.join(str(note) for note in confidence_notes)}")
+
+    return "\n".join(lines)
 
 
 def _summary_text(topic: Dict[str, Any]) -> str:
@@ -285,7 +308,7 @@ def _summary_text(topic: Dict[str, Any]) -> str:
 
 def _topic_references(topic: Dict[str, Any]) -> List[str]:
     references = []
-    for paper in topic.get("representative_papers") or []:
+    for paper in list(topic.get("representative_papers") or [])[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]:
         title = str(paper.get("title") or "Untitled paper")
         arxiv_id = paper.get("arxiv_id") or paper.get("id")
         references.append(f"{title} ({arxiv_id})" if arxiv_id else title)

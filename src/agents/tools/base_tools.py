@@ -26,6 +26,7 @@ from src.agents.tools.topic_discovery_tool import (
     get_topic_title_tool,
 )
 from src.fetchers.arxiv_fetcher import ArxivFetcher, Paper
+from src.openai_client import default_openai_model, resolve_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -353,30 +354,27 @@ def _summary_prompt(topic: str, papers: List[Dict[str, Any]]) -> str:
 
 
 def _call_summary_llm(llm_client: Any, prompt: str) -> Any:
-    """Call common LLM client shapes used elsewhere in the repo."""
-    if callable(llm_client):
-        return llm_client(prompt)
+    """Call an OpenAI client shape used by tool-backed summaries."""
+    client = resolve_openai_client(llm_client, required=True)
 
-    responses_api = getattr(llm_client, "responses", None)
+    responses_api = getattr(client, "responses", None)
     create_method = getattr(responses_api, "create", None)
     if callable(create_method):
-        return create_method(model=getattr(llm_client, "model", "gpt-4o-mini"), input=prompt)
+        return create_method(model=getattr(client, "model", default_openai_model()), input=prompt)
 
-    chat_api = getattr(llm_client, "chat", None)
+    chat_api = getattr(client, "chat", None)
     completions_api = getattr(chat_api, "completions", None)
     create_method = getattr(completions_api, "create", None)
     if callable(create_method):
         return create_method(
-            model=getattr(llm_client, "model", "gpt-4o-mini"),
+            model=getattr(client, "model", default_openai_model()),
             messages=[{"role": "user", "content": prompt}],
         )
 
-    for method_name in ("complete", "generate", "chat", "invoke"):
-        method = getattr(llm_client, method_name, None)
-        if callable(method):
-            return method(prompt)
-
-    raise TypeError("llm_client must be callable or expose a common generation method")
+    raise TypeError(
+        "llm_client must be an OpenAI client exposing responses.create or "
+        "chat.completions.create"
+    )
 
 
 def _extract_llm_text(response: Any) -> str:

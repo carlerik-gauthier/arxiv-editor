@@ -12,7 +12,17 @@ def _draft():
     return {
         "version": 1,
         "title": "LLM agents: Research Brief",
-        "content": "# Draft v1\n\n## Topic Overview\nLLM agents improve planning.\n\n## Representative Papers\n- Agent Planning Benchmarks (2605.00001)",
+        "content": (
+            "# Draft v1\n\n"
+            "## Topic 1 Title\n"
+            "LLM agents\n\n"
+            "## Topic 1 Description\n"
+            "LLM agents improve planning.\n\n"
+            "## Topic 1 Main Results and Importance\n"
+            "- Agent Planning Benchmarks: The benchmark separates planning skill from tool-use noise.\n\n"
+            "## Topic 1 Reference\n"
+            "- Agent Planning Benchmarks (2605.00001)"
+        ),
         "summary_request": SummaryRequest(topic_query="LLM agents").model_dump(mode="json"),
         "provenance": {
             "selected_topics": ["LLM agents"],

@@ -5,14 +5,19 @@ from __future__ import annotations
 import math
 import os
 import re
+import openai
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
-
+from dotenv import load_dotenv
+from src.openai_client import create_openai_client, resolve_openai_client
 from src.processing.embedder import DEFAULT_EMBEDDING_MODEL, TextEmbedder
+from src.processing.hf_logging import configure_third_party_logging
 
+load_dotenv(override=True)
 
-DEFAULT_REPRESENTATIVE_PAPERS = 5
+MAX_REPRESENTATIVE_PAPERS_PER_TOPIC = 3
+DEFAULT_REPRESENTATIVE_PAPERS = MAX_REPRESENTATIVE_PAPERS_PER_TOPIC
 DEFAULT_TOPIC_REPRESENTATION_MODEL = "gpt-4o-mini"
 DEFAULT_MMR_DIVERSITY = 0.3
 DEFAULT_MMR_TOP_N_WORDS = 10
@@ -63,8 +68,6 @@ class TopicModeler:
         title_generator: Optional callable used to turn keywords into titles.
         model_name: Embedding model name when an embedder is not injected.
         representation_model_name: OpenAI model used for BERTopic topic labels.
-        openai_api_key: API key used to create an OpenAI client when needed.
-        openai_client: Optional injected OpenAI-compatible client for tests.
         use_openai_representation: Whether BERTopic should label topics with OpenAI.
         use_mmr_representation: Whether BERTopic should diversify topic keywords with MMR.
         mmr_diversity: Diversity weight for MaximalMarginalRelevance.
@@ -92,6 +95,7 @@ class TopicModeler:
         self.openai_api_key = openai_api_key
         self.openai_client = openai_client
         self.use_openai_representation = use_openai_representation
+
         self.use_mmr_representation = use_mmr_representation
         self.mmr_diversity = mmr_diversity
         self.mmr_top_n_words = mmr_top_n_words
@@ -120,6 +124,9 @@ class TopicModeler:
             raise ValueError("min_topic_size must be at least 2")
         if representative_papers_per_topic < 1:
             raise ValueError("representative_papers_per_topic must be at least 1")
+        representative_papers_per_topic = _bounded_representative_paper_limit(
+            representative_papers_per_topic
+        )
 
         records = normalize_papers(papers)
         documents = [record.text for record in records]
@@ -261,6 +268,7 @@ class TopicModeler:
             raise ValueError("n must be at least 1")
         if not 0.0 <= diversity_threshold <= 1.0:
             raise ValueError("diversity_threshold must be between 0 and 1")
+        n = _bounded_representative_paper_limit(n)
 
         candidates = self._selection_candidates(topic_id, papers)
         if not candidates:
@@ -438,6 +446,7 @@ class TopicModeler:
         if self._topic_model is not None:
             return self._topic_model
 
+        configure_third_party_logging()
         try:
             from bertopic import BERTopic
             from bertopic.representation import MaximalMarginalRelevance
@@ -767,7 +776,7 @@ def _generate_openai_topic_title(
 
     paper_titles = [
         str(paper.get("title", ""))
-        for paper in representative_papers[:5]
+        for paper in representative_papers[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]
         if paper.get("title")
     ]
     prompt = (
@@ -803,7 +812,7 @@ def _generate_openai_topic_description(
 
     paper_titles = [
         str(paper.get("title", ""))
-        for paper in representative_papers[:5]
+        for paper in representative_papers[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]
         if paper.get("title")
     ]
     prompt = (
@@ -821,12 +830,13 @@ def _generate_openai_topic_description(
 
 def _call_openai_title_client(client: Any, model: str, prompt: str) -> Any:
     """Call common OpenAI-compatible client shapes."""
-    responses_api = getattr(client, "responses", None)
+    active_client = resolve_openai_client(client, required=True, purpose="openai_client")
+    responses_api = getattr(active_client, "responses", None)
     create_method = getattr(responses_api, "create", None)
     if callable(create_method):
         return create_method(model=model, input=prompt, temperature=0)
 
-    chat_api = getattr(client, "chat", None)
+    chat_api = getattr(active_client, "chat", None)
     completions_api = getattr(chat_api, "completions", None)
     create_method = getattr(completions_api, "create", None)
     if callable(create_method):
@@ -836,8 +846,6 @@ def _call_openai_title_client(client: Any, model: str, prompt: str) -> Any:
             temperature=0,
         )
 
-    if callable(client):
-        return client(prompt)
     raise TypeError("OpenAI client must expose responses.create or chat.completions.create")
 
 
@@ -894,21 +902,19 @@ def _concise_topic_description(description: str, max_words: int = 80) -> str:
 
 def _create_openai_client(openai_api_key: Optional[str] = None) -> Any:
     """Create an OpenAI client for BERTopic topic representation."""
-    api_key = openai_api_key or os.getenv("OPENAI_API_KEY") or _settings_openai_api_key()
-    if not api_key:
+    resolved_api_key = openai_api_key or os.getenv("OPENAI_API_KEY") or _settings_openai_api_key()
+    if not resolved_api_key:
         raise ValueError(
             "OPENAI_API_KEY is required for BERTopic OpenAI representation labels. "
             "Set OPENAI_API_KEY, pass openai_api_key, inject openai_client, or disable "
             "use_openai_representation."
         )
-
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
+    client = create_openai_client(api_key=resolved_api_key)
+    if client is None:
         raise ImportError(
             "The openai package is required for BERTopic OpenAI representation labels."
-        ) from exc
-    return OpenAI(api_key=api_key)
+        )
+    return client
 
 
 def _settings_openai_api_key() -> str:
@@ -970,6 +976,7 @@ def _select_representative_papers(
     limit: int,
 ) -> List[Dict[str, Any]]:
     """Select the highest-confidence papers for a topic."""
+    limit = _bounded_representative_paper_limit(limit)
     ranked = sorted(
         papers,
         key=lambda paper: (
@@ -990,6 +997,11 @@ def _select_representative_papers(
         }
         for paper in ranked[:limit]
     ]
+
+
+def _bounded_representative_paper_limit(requested_limit: int) -> int:
+    """Clamp representative references to the product requirement."""
+    return max(1, min(int(requested_limit), MAX_REPRESENTATIVE_PAPERS_PER_TOPIC))
 
 
 def _paper_candidates(papers: Iterable[Any]) -> List[Dict[str, Any]]:

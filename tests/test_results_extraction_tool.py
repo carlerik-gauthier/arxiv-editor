@@ -24,6 +24,27 @@ Our results establish certifiable convergence for adaptive samplers.
 """.strip()
 
 
+class _FakeOpenAIClient:
+    """Minimal OpenAI-compatible client for key-result tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.prompts = []
+        self.responses = self
+
+    def create(self, model, input):
+        self.prompts.append({"model": model, "input": input})
+
+        class Response:
+            pass
+
+        response = Response()
+        response.output_text = (
+            self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        )
+        return response
+
+
 ML_PAPER_TEXT = """
 Abstract
 We introduce a retrieval-augmented agent architecture for theorem proving.
@@ -120,34 +141,30 @@ def test_rank_results_by_importance_assigns_stable_ranks():
 
 def test_extract_key_results_uses_injected_llm_client():
     """An injected LLM client can provide structured key results."""
-    captured = {}
+    client = _FakeOpenAIClient(
+        {
+            "results": [
+                {
+                    "result_type": "guarantee",
+                    "statement": "The algorithm has a finite-sample guarantee.",
+                    "significance": "This gives certified behavior.",
+                    "location": "results",
+                    "evidence": ["Theorem 2"],
+                    "importance_score": 0.91,
+                }
+            ],
+            "confidence": "high",
+        }
+    )
 
-    def fake_llm(prompt):
-        captured["prompt"] = prompt
-        return json.dumps(
-            {
-                "results": [
-                    {
-                        "result_type": "guarantee",
-                        "statement": "The algorithm has a finite-sample guarantee.",
-                        "significance": "This gives certified behavior.",
-                        "location": "results",
-                        "evidence": ["Theorem 2"],
-                        "importance_score": 0.91,
-                    }
-                ],
-                "confidence": "high",
-            }
-        )
-
-    analyzer = PaperAnalyzer(llm_client=fake_llm)
+    analyzer = PaperAnalyzer(llm_client=client)
 
     result = analyzer.extract_key_results(MATH_PAPER_TEXT, domain="math")
 
     assert result["source"] == "llm"
     assert result["confidence"] == "high"
     assert result["results"][0]["importance_score"] == 0.91
-    assert "Extract the key results" in captured["prompt"]
+    assert "Extract the key results" in client.prompts[0]["input"]
 
 
 def test_results_extraction_tool_returns_completed_and_failure_payloads():

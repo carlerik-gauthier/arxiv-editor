@@ -1,12 +1,17 @@
 """Tests for the phase-4.1 embedding tool and cache."""
 
+import logging
 import pickle
+import sys
+import types
 
 import pytest
 
 from src.agents import ChrisAgent
 from src.agents.tools import embed_text_tool
 from src.processing import DEFAULT_EMBEDDING_MODEL, EmbeddingCache, TextEmbedder
+from src.processing.embedder import ALLOW_MODEL_DOWNLOAD_ENV
+from src.processing.hf_logging import configure_third_party_logging
 
 
 class FakeSentenceTransformer:
@@ -140,3 +145,114 @@ def test_embedding_cache_persists_to_disk(tmp_path):
     assert reloaded_cache.get("summary", "model-a") == [0.25, 0.75]
     with cache_path.open("rb") as cache_file:
         assert isinstance(pickle.load(cache_file), dict)
+
+
+def test_text_embedder_uses_local_files_only_by_default(monkeypatch, tmp_path):
+    """Runtime model loading should avoid background Hugging Face downloads by default."""
+    captured = {}
+
+    class FakeSentenceTransformerLoader:
+        def __init__(self, model_name, **kwargs):
+            captured["model_name"] = model_name
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformerLoader),
+    )
+    monkeypatch.delenv(ALLOW_MODEL_DOWNLOAD_ENV, raising=False)
+
+    embedder = TextEmbedder(model_name="cached-model", cache_path=tmp_path / "cache.pkl")
+
+    _ = embedder.model
+
+    assert captured == {
+        "model_name": "cached-model",
+        "kwargs": {"local_files_only": True},
+    }
+
+
+def test_text_embedder_raises_clear_error_when_local_model_is_missing(monkeypatch, tmp_path):
+    """Missing cached models should fail fast without retrying noisy runtime downloads."""
+    class FakeSentenceTransformerLoader:
+        def __init__(self, model_name, **kwargs):
+            raise OSError(f"{model_name} not cached")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformerLoader),
+    )
+    monkeypatch.delenv(ALLOW_MODEL_DOWNLOAD_ENV, raising=False)
+
+    embedder = TextEmbedder(model_name="missing-model", cache_path=tmp_path / "cache.pkl")
+
+    with pytest.raises(RuntimeError, match="local Hugging Face cache"):
+        _ = embedder.model
+
+
+def test_text_embedder_can_opt_in_to_runtime_model_downloads(monkeypatch, tmp_path):
+    """An explicit env var should preserve opt-in download behavior for first-time setup."""
+    captured = {}
+
+    class FakeSentenceTransformerLoader:
+        def __init__(self, model_name, **kwargs):
+            captured["model_name"] = model_name
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformerLoader),
+    )
+    monkeypatch.setenv(ALLOW_MODEL_DOWNLOAD_ENV, "1")
+
+    embedder = TextEmbedder(model_name="downloadable-model", cache_path=tmp_path / "cache.pkl")
+
+    _ = embedder.model
+
+    assert captured == {
+        "model_name": "downloadable-model",
+        "kwargs": {},
+    }
+
+
+def test_configure_third_party_logging_filters_known_transformers_alias_warning():
+    """Only the noisy transformers alias warning should be filtered."""
+    logger = logging.getLogger("transformers")
+    alias_logger = logging.getLogger("transformers.__init__")
+    existing_filters = list(logger.filters)
+    existing_alias_filters = list(alias_logger.filters)
+    logger.filters[:] = []
+    alias_logger.filters[:] = []
+    try:
+        configure_third_party_logging()
+        allowed = logging.LogRecord(
+            name="transformers",
+            level=logging.WARNING,
+            pathname=__file__,
+            lineno=1,
+            msg="Different warning",
+            args=(),
+            exc_info=None,
+        )
+        blocked = logging.LogRecord(
+            name="transformers",
+            level=logging.WARNING,
+            pathname=__file__,
+            lineno=1,
+            msg=(
+                "Accessing `__path__` from `.models.zoedepth.image_processing_pil_zoedepth`. "
+                "Returning `__path__` instead. Behavior may be different and this alias "
+                "will be removed in future versions."
+            ),
+            args=(),
+            exc_info=None,
+        )
+
+        assert all(active_filter.filter(allowed) for active_filter in logger.filters)
+        assert any(active_filter.filter(blocked) is False for active_filter in logger.filters)
+    finally:
+        logger.filters[:] = existing_filters
+        alias_logger.filters[:] = existing_alias_filters

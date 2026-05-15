@@ -5,14 +5,19 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, Optional, Sequence
 
 from src.agents.base_agent import AgentTool
-from src.processing.topic_modeler import TopicModeler, generate_topic_title
+from src.openai_client import default_openai_model, resolve_openai_client
+from src.processing.topic_modeler import (
+    MAX_REPRESENTATIVE_PAPERS_PER_TOPIC,
+    TopicModeler,
+    generate_topic_title,
+)
 
 
 def discover_topics_tool(
     papers: Iterable[Any],
     min_topic_size: int = 5,
     num_topics: Optional[int] = None,
-    representative_papers_per_topic: int = 5,
+    representative_papers_per_topic: int = MAX_REPRESENTATIVE_PAPERS_PER_TOPIC,
     batch_size: int = 32,
     representation_model_name: str = "gpt-4o-mini",
     use_openai_representation: bool = True,
@@ -20,6 +25,7 @@ def discover_topics_tool(
     mmr_diversity: float = 0.3,
     mmr_top_n_words: int = 10,
     openai_api_key: Optional[str] = None,
+    openai_client: Optional[Any] = None,
     topic_modeler: Optional[TopicModeler] = None,
 ) -> Dict[str, Any]:
     """
@@ -52,6 +58,7 @@ def discover_topics_tool(
     modeler = topic_modeler or TopicModeler(
         representation_model_name=representation_model_name,
         openai_api_key=openai_api_key,
+        openai_client=openai_client,
         use_openai_representation=use_openai_representation,
         use_mmr_representation=use_mmr_representation,
         mmr_diversity=mmr_diversity,
@@ -89,6 +96,10 @@ def _small_corpus_topic_result(
 ) -> Dict[str, Any]:
     """Return a deterministic topic result when BERTopic has too little data."""
     normalized_papers = [paper if isinstance(paper, dict) else {"title": str(paper)} for paper in papers]
+    representative_papers_per_topic = min(
+        representative_papers_per_topic,
+        MAX_REPRESENTATIVE_PAPERS_PER_TOPIC,
+    )
     representative_papers = [
         {
             "arxiv_id": paper.get("arxiv_id"),
@@ -207,7 +218,10 @@ def _build_title_prompt(
     sample_papers: Sequence[Dict[str, Any]],
 ) -> str:
     """Build a compact prompt for LLM-backed topic title generation."""
-    paper_titles = [str(paper.get("title", "")) for paper in sample_papers[:5]]
+    paper_titles = [
+        str(paper.get("title", ""))
+        for paper in sample_papers[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]
+    ]
     return (
         "Create a concise research topic title.\n"
         f"Keywords: {', '.join(topic_keywords)}\n"
@@ -218,19 +232,34 @@ def _build_title_prompt(
 
 def _call_title_llm(llm_client: Any, prompt: str) -> str:
     """Call common LLM client shapes and normalize the returned title."""
-    if callable(llm_client):
-        response = llm_client(prompt)
+    client = resolve_openai_client(llm_client, required=True)
+    responses_api = getattr(client, "responses", None)
+    create_method = getattr(responses_api, "create", None)
+    if callable(create_method):
+        response = create_method(
+            model=getattr(client, "model", default_openai_model()),
+            input=prompt,
+        )
     else:
-        for method_name in ("complete", "generate", "chat", "invoke"):
-            method = getattr(llm_client, method_name, None)
-            if callable(method):
-                response = method(prompt)
-                break
-        else:
-            raise TypeError("llm_client must be callable or expose complete/generate/chat/invoke")
+        chat_api = getattr(client, "chat", None)
+        completions_api = getattr(chat_api, "completions", None)
+        create_method = getattr(completions_api, "create", None)
+        if not callable(create_method):
+            raise TypeError(
+                "llm_client must be an OpenAI client exposing responses.create or "
+                "chat.completions.create"
+            )
+        response = create_method(
+            model=getattr(client, "model", default_openai_model()),
+            messages=[{"role": "user", "content": prompt}],
+        )
 
     if isinstance(response, dict):
         response = response.get("title") or response.get("content") or response.get("text")
+    else:
+        output_text = getattr(response, "output_text", None)
+        if isinstance(output_text, str):
+            response = output_text
     title = str(response).strip().strip('"')
     if not title:
         raise ValueError("llm_client returned an empty topic title")

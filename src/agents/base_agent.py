@@ -22,6 +22,7 @@ from agents import Agent as OpenAIAgent
 from agents import FunctionTool, RunContextWrapper
 
 from src.agents import openai_tracing
+from src.openai_client import resolve_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +259,8 @@ class BaseAgent:
                     raise ToolExecutionError(f"Tool '{tool_name}' is not available to {self.name}")
 
                 logger.info("Agent '%s' executing tool '%s'", self.name, tool_name)
-                result.result = tool.execute(parameters)
+                tool_parameters = self._prepare_tool_parameters(tool, parameters)
+                result.result = tool.execute(tool_parameters)
                 result.success = True
                 openai_tracing.set_span_output(trace_span, result.result)
 
@@ -278,6 +280,36 @@ class BaseAgent:
                 self._add_message("tool", result.to_dict())
 
         return result
+
+    def _prepare_tool_parameters(
+        self,
+        tool: AgentTool,
+        parameters: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Inject the agent's OpenAI client into tool calls that support it."""
+        resolved_parameters = dict(parameters or {})
+        signature = inspect.signature(tool.function)
+        client_parameter_names = [
+            parameter_name
+            for parameter_name in ("llm_client", "openai_client")
+            if parameter_name in signature.parameters
+        ]
+        if not client_parameter_names:
+            return resolved_parameters
+
+        explicit_client = next(
+            (
+                resolved_parameters.get(parameter_name)
+                for parameter_name in client_parameter_names
+                if resolved_parameters.get(parameter_name) is not None
+            ),
+            None,
+        )
+        active_client = resolve_openai_client(explicit_client or self.llm_client)
+        if active_client is not None:
+            for parameter_name in client_parameter_names:
+                resolved_parameters[parameter_name] = active_client
+        return resolved_parameters
 
     def execute_tool_calls(self, tool_calls: Iterable[ToolCall]) -> List[ToolResult]:
         """Execute multiple tool calls in order."""

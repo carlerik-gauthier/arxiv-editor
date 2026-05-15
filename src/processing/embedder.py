@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import pickle
 import numpy as np
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Union
+
+from src.processing.hf_logging import configure_third_party_logging
 
 
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+ALLOW_MODEL_DOWNLOAD_ENV = "ARXIV_EDITOR_ALLOW_EMBEDDING_MODEL_DOWNLOAD"
 
 
 class EmbeddingCache:
@@ -21,7 +25,7 @@ class EmbeddingCache:
     or HDF5 backend can replace it later without changing the embedder API.
     """
 
-    def __init__(self, cache_path: Path | str = "data/cache/embeddings.pkl") -> None:
+    def __init__(self, cache_path: Union[Path, str] = "data/cache/embeddings.pkl") -> None:
         self.cache_path = Path(cache_path)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._cache: Dict[str, List[float]] = self._load()
@@ -99,7 +103,7 @@ class TextEmbedder:
         self,
         model_name: str = DEFAULT_EMBEDDING_MODEL,
         cache: Optional[EmbeddingCache] = None,
-        cache_path: Path | str = "data/cache/embeddings.pkl",
+        cache_path: Union[Path, str] = "data/cache/embeddings.pkl",
         model: Optional[Any] = None,
     ) -> None:
         self.model_name = model_name
@@ -141,7 +145,7 @@ class TextEmbedder:
         if uncached_items:
             self.cache.save()
 
-        final_embeddings = [embedding for embedding in embeddings if embedding is not None]
+        final_embeddings = [np.array(embedding) for embedding in embeddings if embedding is not None]
         dimension = len(final_embeddings[0]) if final_embeddings else 0
         return {
             "embeddings": final_embeddings,
@@ -165,6 +169,7 @@ class TextEmbedder:
     def model(self) -> Any:
         """Load and return the underlying sentence-transformers model."""
         if self._model is None:
+            configure_third_party_logging()
             try:
                 from sentence_transformers import SentenceTransformer
             except ImportError as exc:
@@ -172,7 +177,20 @@ class TextEmbedder:
                     "sentence-transformers is required for real embedding generation. "
                     "Install project dependencies or inject a compatible model."
                 ) from exc
-            self._model = SentenceTransformer(self.model_name)
+            allow_model_download = _allow_runtime_model_download()
+            model_kwargs = {} if allow_model_download else {"local_files_only": True}
+            try:
+                self._model = SentenceTransformer(self.model_name, **model_kwargs)
+            except Exception as exc:
+                if not allow_model_download:
+                    raise RuntimeError(
+                        f"Embedding model '{self.model_name}' is not available in the local "
+                        "Hugging Face cache. Download it once before running the app, or set "
+                        f"{ALLOW_MODEL_DOWNLOAD_ENV}=1 to allow a runtime download."
+                    ) from exc
+                raise RuntimeError(
+                    f"Could not load embedding model '{self.model_name}'."
+                ) from exc
         return self._model
 
     def _encode_batch(self, texts: List[str], batch_size: int) -> List[List[float]]:
@@ -218,3 +236,9 @@ def _to_float_list(embedding: Any) -> List[float]:
     if hasattr(embedding, "tolist"):
         embedding = embedding.tolist()
     return np.array([float(value) for value in embedding])
+
+
+def _allow_runtime_model_download() -> bool:
+    """Return whether runtime embedding-model downloads are explicitly enabled."""
+    value = os.getenv(ALLOW_MODEL_DOWNLOAD_ENV, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}

@@ -47,6 +47,27 @@ KEY_RESULTS = [
 ]
 
 
+class _FakeOpenAIClient:
+    """Minimal OpenAI-compatible client for impact-assessment tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.prompts = []
+        self.responses = self
+
+    def create(self, model, input):
+        self.prompts.append({"model": model, "input": input})
+
+        class Response:
+            pass
+
+        response = Response()
+        response.output_text = (
+            self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        )
+        return response
+
+
 def test_paper_analyzer_assesses_impact_with_heuristics():
     """Impact assessment detects novelty, open problems, techniques, and applications."""
     analyzer = PaperAnalyzer()
@@ -91,25 +112,21 @@ def test_generate_impact_narrative_documents_assessment():
 
 def test_assess_impact_uses_injected_llm_client():
     """An injected LLM client can provide structured impact assessment."""
-    captured = {}
+    client = _FakeOpenAIClient(
+        {
+            "novelty_score": 0.88,
+            "solves_open_problem": True,
+            "introduces_new_techniques": True,
+            "potential_applications": ["certified adaptive sampling"],
+            "community_impact": "high",
+            "community_impact_score": 0.91,
+            "impact_summary": "The paper likely matters because it closes a certification gap.",
+            "evidence": ["long-standing open problem"],
+            "confidence": "high",
+        }
+    )
 
-    def fake_llm(prompt):
-        captured["prompt"] = prompt
-        return json.dumps(
-            {
-                "novelty_score": 0.88,
-                "solves_open_problem": True,
-                "introduces_new_techniques": True,
-                "potential_applications": ["certified adaptive sampling"],
-                "community_impact": "high",
-                "community_impact_score": 0.91,
-                "impact_summary": "The paper likely matters because it closes a certification gap.",
-                "evidence": ["long-standing open problem"],
-                "confidence": "high",
-            }
-        )
-
-    analyzer = PaperAnalyzer(llm_client=fake_llm)
+    analyzer = PaperAnalyzer(llm_client=client)
 
     result = analyzer.assess_impact(IMPACT_PAPER, KEY_RESULTS)
 
@@ -117,7 +134,7 @@ def test_assess_impact_uses_injected_llm_client():
     assert result["confidence"] == "high"
     assert result["community_impact_score"] == 0.91
     assert result["potential_applications"] == ["certified adaptive sampling"]
-    assert "Assess this paper" in captured["prompt"]
+    assert "Assess this paper" in client.prompts[0]["input"]
 
 
 def test_impact_assessment_tool_returns_completed_and_failure_payloads():

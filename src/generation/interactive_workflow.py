@@ -94,7 +94,7 @@ class InteractiveSummaryWorkflow:
                     recoverable=True,
                 ).to_dict()
             report = self.session._validate_draft(self.session.drafts[-1])
-            return WorkflowResult(
+            result = WorkflowResult(
                 message="Validation complete.",
                 state=self.session.state.value,
                 actions_taken=["validated_current_draft"],
@@ -102,7 +102,9 @@ class InteractiveSummaryWorkflow:
                 draft_preview=self.session.drafts[-1].get("content"),
                 next_questions=[],
                 recoverable=False,
-            ).to_dict() | {"validation_report": report}
+            ).to_dict()
+            result["validation_report"] = report
+            return result
 
         return self._safe_call(operation)
 

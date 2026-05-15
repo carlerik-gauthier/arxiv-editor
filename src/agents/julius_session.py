@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,7 @@ from src.generation.revision import (
 )
 from src.agents.tools.formatting_tool import format_document_tool
 from src.agents.tools.quality_check_tool import validate_quality_tool
+from src.openai_client import create_openai_client, default_openai_model, resolve_openai_client
 
 
 class JuliusSessionState(str, Enum):
@@ -88,7 +89,7 @@ class JuliusSession:
         reference_date: Optional[Any] = None,
         selected_papers: Optional[List[Dict[str, Any]]] = None,
         analyses: Optional[List[Dict[str, Any]]] = None,
-        output_dir: str | Path = "outputs",
+        output_dir: Union[str, Path] = "outputs",
         run_specialists_in_preview: bool = False,
     ) -> None:
         self.julius = julius or JuliusAgent()
@@ -540,9 +541,7 @@ def _classify_user_intent_with_llm(
     llm_client: Optional[Any] = None,
 ) -> str:
     """Use an OpenAI-compatible LLM when keyword routing returns UNKNOWN."""
-    client = llm_client
-    if client is None:
-        client = _create_openai_client_for_intent()
+    client = resolve_openai_client(llm_client) or _create_openai_client_for_intent()
     if client is None:
         return JuliusIntent.UNKNOWN.value
 
@@ -564,11 +563,10 @@ def _classify_user_intent_with_llm(
 
 
 def _call_intent_llm(client: Any, prompt: str, model: str) -> Any:
-    """Call common LLM client shapes for intent classification."""
-    if callable(client):
-        return client(prompt)
+    """Call an OpenAI client for intent classification."""
+    active_client = resolve_openai_client(client, required=True)
 
-    responses_api = getattr(client, "responses", None)
+    responses_api = getattr(active_client, "responses", None)
     if responses_api is not None:
         create_method = getattr(responses_api, "create", None)
         if callable(create_method):
@@ -578,7 +576,7 @@ def _call_intent_llm(client: Any, prompt: str, model: str) -> Any:
                 temperature=0,
             )
 
-    chat_api = getattr(client, "chat", None)
+    chat_api = getattr(active_client, "chat", None)
     if chat_api is not None:
         completions_api = getattr(chat_api, "completions", None)
         create_method = getattr(completions_api, "create", None)
@@ -589,17 +587,10 @@ def _call_intent_llm(client: Any, prompt: str, model: str) -> Any:
                 temperature=0,
             )
 
-    for method_name in ("complete", "generate", "chat", "invoke"):
-        method = getattr(client, method_name, None)
-        if callable(method):
-            try:
-                return method(
-                    messages=[{"role": "user", "content": prompt}],
-                    system_prompt="Return only JSON with an intent field.",
-                )
-            except TypeError:
-                return method(prompt)
-    return None
+    raise TypeError(
+        "llm_client must be an OpenAI client exposing responses.create or "
+        "chat.completions.create"
+    )
 
 
 def _extract_intent_from_llm_response(response: Any) -> str:
@@ -650,16 +641,7 @@ def _create_openai_client_for_intent() -> Optional[Any]:
         or _settings_openai_api_key_for_intent()
         or os.getenv("LLM_API_KEY")
     )
-    if not api_key:
-        return None
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return None
-    try:
-        return OpenAI(api_key=api_key)
-    except Exception:
-        return None
+    return create_openai_client(api_key=api_key)
 
 
 def _settings_openai_api_key_for_intent() -> str:
@@ -687,7 +669,7 @@ def _intent_classifier_model() -> str:
             return settings.llm_model
     except Exception:
         pass
-    return "gpt-4o-mini"
+    return default_openai_model()
 
 
 def update_summary_request_tool(

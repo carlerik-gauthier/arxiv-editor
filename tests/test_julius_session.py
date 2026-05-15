@@ -1,5 +1,7 @@
 """Tests for Julius's phase-6.2 interactive conversation session."""
 
+import json
+
 from src.agents import (
     JuliusIntent,
     JuliusSession,
@@ -9,6 +11,27 @@ from src.agents import (
     update_summary_request_tool,
 )
 from src.generation.user_request import Audience, Depth, SummaryFormat
+
+
+class _FakeOpenAIClient:
+    """Tiny responses API stub for intent-classifier tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.prompts = []
+        self.responses = self
+
+    def create(self, model, input, temperature=0):
+        self.prompts.append({"model": model, "input": input, "temperature": temperature})
+
+        class Response:
+            pass
+
+        response = Response()
+        response.output_text = (
+            self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
+        )
+        return response
 
 
 def test_intent_classifier_routes_core_session_messages():
@@ -23,7 +46,7 @@ def test_intent_classifier_routes_core_session_messages():
 
 def test_intent_classifier_falls_back_to_llm_when_keyword_match_is_unknown():
     """When keyword routing is inconclusive, an injected LLM client can classify intent."""
-    llm_client = lambda prompt: {"intent": "GENERATE_DRAFT"}
+    llm_client = _FakeOpenAIClient({"intent": "GENERATE_DRAFT"})
     result = classify_user_intent_tool(
         "let's proceed",
         session_state=JuliusSessionState.PLANNING.value,
@@ -34,7 +57,7 @@ def test_intent_classifier_falls_back_to_llm_when_keyword_match_is_unknown():
 
 def test_intent_classifier_llm_fallback_returns_unknown_on_invalid_output():
     """Invalid fallback payloads are safely normalized to UNKNOWN."""
-    llm_client = lambda prompt: "not-json"
+    llm_client = _FakeOpenAIClient("not-json")
     result = classify_user_intent_tool(
         "continue",
         session_state=JuliusSessionState.PLANNING.value,
@@ -86,6 +109,11 @@ def test_session_intake_then_generation_then_finalization():
     assert second["summary_request"]["must_include_categories"] == ["cs.AI"]
     assert draft["state"] == JuliusSessionState.AWAITING_REVIEW.value
     assert "Draft v1" in draft["draft_preview"]
+    assert "## Topic 1 Title" in draft["draft_preview"]
+    assert "## Topic 1 Description" in draft["draft_preview"]
+    assert "## Topic 1 Main Results and Importance" in draft["draft_preview"]
+    assert "## Topic 1 Reference" in draft["draft_preview"]
+    assert "## Topic Overview" not in draft["draft_preview"]
     assert progress_events == [
         "Preparing the paper search scope.",
         "Modeling candidate topics.",

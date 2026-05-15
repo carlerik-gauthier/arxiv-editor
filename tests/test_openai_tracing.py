@@ -128,8 +128,27 @@ def test_trace_generation_bounds_large_input_and_swallows_export_error(monkeypat
     with openai_tracing.trace_generation(payload, model="test-model") as span:
         assert span.name == "generation"
 
-    assert len(captured["input"]) < 1200
-    assert "<truncated" in captured["input"]
+    assert isinstance(captured["input"], list)
+    assert captured["input"][0]["role"] == "user"
+    assert len(captured["input"][0]["content"]) < 1200
+    assert "<truncated" in captured["input"][0]["content"]
+
+
+def test_trace_generation_wraps_non_message_input_into_message_array(monkeypatch):
+    """Generation spans should always receive the SDK's expected array-of-objects shape."""
+    captured = {}
+
+    class FakeSdk:
+        def generation_span(self, **kwargs):
+            captured["input"] = kwargs["input"]
+            return _SpanManager(_TraceSpan("generation"))
+
+    monkeypatch.setattr(openai_tracing, "_load_tracing_sdk", lambda: FakeSdk())
+
+    with openai_tracing.trace_generation("plain text prompt", model="test-model"):
+        pass
+
+    assert captured["input"] == [{"role": "user", "content": "plain text prompt"}]
 
 
 def test_trace_custom_bounds_data_before_opening_span(monkeypatch):
@@ -160,3 +179,19 @@ def test_set_span_output_swallows_tracing_payload_errors():
             raise RuntimeError("payload too large")
 
     openai_tracing.set_span_output(FailingOutputSpan(), {"content": "x" * 5000})
+
+
+def test_tracing_is_disabled_by_default(monkeypatch):
+    """Local runs should not export traces unless explicitly enabled."""
+    monkeypatch.delenv("OPENAI_AGENTS_ENABLE_TRACING", raising=False)
+    monkeypatch.delenv("OPENAI_AGENTS_DISABLE_TRACING", raising=False)
+
+    assert openai_tracing._is_tracing_enabled() is False
+
+
+def test_disable_flag_overrides_enable_flag(monkeypatch):
+    """An explicit disable flag should always win."""
+    monkeypatch.setenv("OPENAI_AGENTS_ENABLE_TRACING", "true")
+    monkeypatch.setenv("OPENAI_AGENTS_DISABLE_TRACING", "true")
+
+    assert openai_tracing._is_tracing_enabled() is False

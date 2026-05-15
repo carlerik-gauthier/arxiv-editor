@@ -137,8 +137,30 @@ def test_content_synthesizer_respects_request_format_and_provenance():
     assert draft["status"] == "drafted"
     assert "Draft v1" in draft["content"]
     assert "Representative Paper Rankings" in draft["title"]
+    assert "## Topic 1 Title" in draft["content"]
+    assert "\n\nLLM agents\n\n## Topic 1 Description" in draft["content"]
+    assert "## Topic 1 Description" in draft["content"]
+    assert "## Topic 1 Main Results and Importance" in draft["content"]
+    assert "## Topic 1 Reference" in draft["content"]
     assert len(draft["provenance"]["selected_papers"]) == 1
     assert draft["provenance"]["agent_callbacks"][0]["agent"] == "JeanBaptiste"
+
+
+def test_content_synthesizer_uses_julius_topic_blocks_without_specialists():
+    """Draft generation should still follow Julius's topic pattern without specialist topics."""
+    draft = ContentSynthesizer().synthesize_draft(
+        summary_request=SummaryRequest(topic_query="LLM agents", max_papers=1),
+        selected_papers=[_paper()],
+        analyses=[_analysis()],
+        agent_results=[],
+    )
+
+    assert "## Topic 1 Title" in draft["content"]
+    assert "## Topic 1 Description" in draft["content"]
+    assert "## Topic 1 Main Results and Importance" in draft["content"]
+    assert "## Topic 1 Reference" in draft["content"]
+    assert "## Topic Overview" not in draft["content"]
+    assert "Agent Planning Benchmarks (2605.00001)" in draft["content"]
 
 
 def test_content_synthesizer_caps_specialist_topics_to_seven():
@@ -175,9 +197,48 @@ def test_content_synthesizer_caps_specialist_topics_to_seven():
         agent_results=callbacks,
     )
 
-    assert len(draft["sections"]) == 21
+    assert len(draft["sections"]) == 28
     assert "Topic 7" in draft["content"]
     assert "Topic 8" not in draft["content"]
+
+
+def test_julius_renders_at_most_three_references_per_topic():
+    """Draft output should never list more than three references for one topic."""
+    callbacks = [
+        {
+            "to_agent": "JeanBaptiste",
+            "status": "COMPLETED",
+            "result": {
+                "response": {
+                    "topic_summaries": [
+                        {
+                            "topic": "LLM Agents",
+                            "description": "Description",
+                            "main_results_and_importance": "Main results",
+                            "representative_papers": [
+                                {"title": "Paper 1", "arxiv_id": "2605.00001"},
+                                {"title": "Paper 2", "arxiv_id": "2605.00002"},
+                                {"title": "Paper 3", "arxiv_id": "2605.00003"},
+                                {"title": "Paper 4", "arxiv_id": "2605.00004"},
+                            ],
+                        }
+                    ]
+                }
+            },
+        }
+    ]
+
+    draft = ContentSynthesizer().synthesize_draft(
+        summary_request=SummaryRequest(topic_query="LLM agents", max_topics=3),
+        selected_papers=[_paper()],
+        analyses=[_analysis()],
+        agent_results=callbacks,
+    )
+
+    assert "Paper 1" in draft["content"]
+    assert "Paper 2" in draft["content"]
+    assert "Paper 3" in draft["content"]
+    assert "Paper 4" not in draft["content"]
 
 
 def test_julius_generates_first_draft_with_specialist_handoff_provenance():
@@ -206,4 +267,3 @@ def test_julius_generates_first_draft_with_specialist_handoff_provenance():
     assert "generate_first_draft_tool" in julius.list_tools()
     assert "create_topic_overview_tool" in julius.specialist_agents["JeanBaptiste"].list_tools()
     assert result["draft"]["provenance"]["selected_papers"][0]["title"] == "Agent Planning Benchmarks"
-

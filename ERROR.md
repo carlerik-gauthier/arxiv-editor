@@ -1,0 +1,1 @@
+"Make sure to input embeddings as a numpy array or scipy.sparse.csr.csr_matrix. "

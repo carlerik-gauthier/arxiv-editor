@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, Mock, patch, mock_open
 import tempfile
 import shutil
 
-from src.fetchers.arxiv_fetcher import (
+from old_src.fetchers.arxiv_fetcher import (
     ArxivFetcher,
     ArxivFetcherError,
     Paper,

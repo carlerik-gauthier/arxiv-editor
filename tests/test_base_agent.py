@@ -143,6 +143,64 @@ class TestBaseAgent:
         assert response["tool_results"][0].success is True
         assert response["tool_results"][0].result["threshold_met"] is True
 
+    def test_execute_tool_injects_openai_client_for_tools_that_accept_llm_client(self):
+        class FakeOpenAIClient:
+            def __init__(self):
+                self.responses = self
+
+            def create(self, model, input):
+                return {"model": model, "input": input}
+
+        captured = {}
+        client = FakeOpenAIClient()
+        agent = BaseAgent(
+            name="Tester",
+            expertise="Testing",
+            llm_client=client,
+            tools=[
+                AgentTool(
+                    name="needs_llm",
+                    description="Tool that expects an llm client",
+                    function=lambda prompt, llm_client=None: captured.setdefault("llm_client", llm_client),
+                    required_parameters=["prompt"],
+                )
+            ],
+        )
+
+        result = agent.execute_tool("needs_llm", {"prompt": "summarize this"})
+
+        assert result.success is True
+        assert captured["llm_client"] is client
+
+    def test_execute_tool_injects_openai_client_for_tools_that_accept_openai_client(self):
+        class FakeOpenAIClient:
+            def __init__(self):
+                self.responses = self
+
+            def create(self, model, input):
+                return {"model": model, "input": input}
+
+        captured = {}
+        client = FakeOpenAIClient()
+        agent = BaseAgent(
+            name="Tester",
+            expertise="Testing",
+            llm_client=client,
+            tools=[
+                AgentTool(
+                    name="needs_openai",
+                    description="Tool that expects an OpenAI client",
+                    function=lambda prompt, openai_client=None: captured.setdefault("openai_client", openai_client),
+                    required_parameters=["prompt"],
+                )
+            ],
+        )
+
+        result = agent.execute_tool("needs_openai", {"prompt": "discover topics"})
+
+        assert result.success is True
+        assert captured["openai_client"] is client
+
 
 class TestBaseTools:
     """Tests for the base agent tools."""

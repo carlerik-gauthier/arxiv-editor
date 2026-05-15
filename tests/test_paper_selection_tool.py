@@ -93,6 +93,21 @@ def test_topic_modeler_selects_representative_papers_with_diversity():
     assert "Selected for high topic fit" in result["selected_papers"][0]["justification"]
 
 
+def test_topic_modeler_caps_representative_papers_to_three():
+    """Representative paper output should never exceed the three-reference product cap."""
+    modeler = TopicModeler(embedder=SemanticFakeEmbedder())
+
+    result = modeler.select_representative_papers(
+        topic_id=3,
+        papers=_topic_papers(),
+        n=5,
+        diversity_threshold=1.0,
+    )
+
+    assert result["paper_count"] == 3
+    assert result["requested_count"] == 3
+
+
 def test_select_representative_papers_tool_returns_structured_results():
     """Agent tool wrapper exposes rankings and failure payloads."""
     modeler = TopicModeler(embedder=SemanticFakeEmbedder())

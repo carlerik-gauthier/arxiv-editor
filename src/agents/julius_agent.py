@@ -15,6 +15,7 @@ from src.agents.specialized_agents import (
     SpecializedAgent,
     create_all_specialized_agents,
 )
+from src.processing.topic_modeler import MAX_REPRESENTATIVE_PAPERS_PER_TOPIC
 from src.generation.user_request import (
     Audience,
     SummaryRequest,
@@ -211,7 +212,7 @@ class JuliusAgent(BaseAgent):
         self.request_session = SummaryRequestSession()
         self.synthesizer = ContentSynthesizer(llm_client=llm_client)
         self.specialist_agents = self._build_agent_registry(
-            specialist_agents or create_all_specialized_agents()
+            specialist_agents or create_all_specialized_agents(llm_client=llm_client)
         )
 
         for agent_name in self.specialist_agents:
@@ -935,9 +936,10 @@ class JuliusAgent(BaseAgent):
                 references = _format_topic_references(topic.get("representative_papers") or [])
                 sections.extend(
                     [
-                        f"## Topic {topic_index}: {name} + Description\n{description}",
+                        f"## Topic {topic_index} Title\n{name}",
+                        f"## Topic {topic_index} Description\n{description}",
                         f"## Topic {topic_index} Main Results and Importance\n{main_results}",
-                        f"## References for Topic {topic_index}\n{references}",
+                        f"## Topic {topic_index} Reference\n{references}",
                     ]
                 )
                 topic_index += 1
@@ -989,7 +991,7 @@ def _stringify_summary(topic: Dict[str, Any]) -> str:
 
 def _format_topic_references(papers: Iterable[Dict[str, Any]]) -> str:
     lines = []
-    for paper in papers:
+    for paper in list(papers)[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]:
         title = str(paper.get("title") or "Untitled paper")
         arxiv_id = paper.get("arxiv_id") or paper.get("id")
         lines.append(f"- {title} ({arxiv_id})" if arxiv_id else f"- {title}")

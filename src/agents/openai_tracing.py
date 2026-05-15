@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _DEFAULT_MAX_TRACE_CHARS = 8000
+_TRACING_ENABLE_ENV_VAR = "OPENAI_AGENTS_ENABLE_TRACING"
 
 
 @dataclass(frozen=True)
@@ -145,7 +146,7 @@ def trace_generation(
             yield span
         return
 
-    trace_input = serialize_for_trace(messages) if include_sensitive_trace_data() else None
+    trace_input = _generation_input(messages) if include_sensitive_trace_data() else None
     with _safe_sdk_span(sdk.generation_span, input=trace_input, model=model) as span:
         yield span
 
@@ -198,18 +199,47 @@ def serialize_for_trace(value: Any) -> str:
     except TypeError:
         serialized = str(value)
 
+    return _truncate_trace_string(serialized)
+
+
+def _truncate_trace_string(value: str) -> str:
+    """Trim serialized trace payloads to the configured size limit."""
     max_chars = _max_trace_chars()
-    if len(serialized) <= max_chars:
-        return serialized
-    return serialized[:max_chars] + f"... <truncated {len(serialized) - max_chars} chars>"
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + f"... <truncated {len(value) - max_chars} chars>"
 
 
 def _generation_output(output: Any) -> list[Dict[str, Any]]:
     return [{"role": "assistant", "content": serialize_for_trace(output)}]
 
 
+def _generation_input(messages: Any) -> Optional[list[Dict[str, Any]]]:
+    normalized = _normalize_trace_value(messages)
+    if isinstance(normalized, list) and all(isinstance(item, dict) for item in normalized):
+        return normalized
+    if isinstance(normalized, dict):
+        return [normalized]
+    if normalized is None:
+        return None
+    return [{"role": "user", "content": str(normalized)}]
+
+
 def _is_generation_span_data(span_data: Any) -> bool:
     return type(span_data).__name__ == "GenerationSpanData"
+
+
+def _normalize_trace_value(value: Any) -> Any:
+    """Convert trace payloads into JSON-like values while preserving list/object shape."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _truncate_trace_string(value)
+    if isinstance(value, dict):
+        return {str(key): _normalize_trace_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_trace_value(item) for item in value]
+    return _truncate_trace_string(str(value))
 
 
 def _trace_data(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -305,7 +335,7 @@ def _trace_metadata(data: Optional[Dict[str, Any]]) -> Dict[str, str]:
 def _load_tracing_sdk() -> Optional[_TracingSdk]:
     global _TRACING_SDK, _TRACING_SDK_LOADED
 
-    if os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "").strip().lower() in _TRUE_VALUES:
+    if not _is_tracing_enabled():
         return None
 
     if _TRACING_SDK_LOADED:
@@ -336,3 +366,14 @@ def _load_tracing_sdk() -> Optional[_TracingSdk]:
         handoff_span=handoff_span,
     )
     return _TRACING_SDK
+
+
+def _is_tracing_enabled() -> bool:
+    """Enable OpenAI trace export only when explicitly requested."""
+    if os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "").strip().lower() in _TRUE_VALUES:
+        return False
+
+    value = os.getenv(_TRACING_ENABLE_ENV_VAR)
+    if value is None:
+        return False
+    return value.strip().lower() in _TRUE_VALUES

@@ -7,7 +7,7 @@ state dictionaries for unit tests.
 
 from __future__ import annotations
 
-from typing import Any, Dict, MutableMapping
+from typing import Any, Dict, MutableMapping, Optional
 
 from src.agents import AgentTool, JeanBaptisteAgent, JuliusAgent, JuliusSession, MichelAgent
 from src.agents import openai_tracing
@@ -17,7 +17,7 @@ from src.generation.interactive_workflow import InteractiveSummaryWorkflow
 
 def ensure_workflow_state(
     session_state: MutableMapping[str, Any],
-    workflow: InteractiveSummaryWorkflow | None = None,
+    workflow: Optional[InteractiveSummaryWorkflow] = None,
 ) -> InteractiveSummaryWorkflow:
     """Initialize persistent Streamlit state without overwriting rerun data."""
     if "workflow" not in session_state:
@@ -103,7 +103,7 @@ def collect_topic_discovery_debug(workflow: InteractiveSummaryWorkflow) -> Dict[
 
 def append_chat_result(
     session_state: MutableMapping[str, Any],
-    user_message: str | None,
+    user_message: Optional[str],
     result: Dict[str, Any],
 ) -> None:
     """Append a user turn and Julius response to chat history."""
@@ -163,7 +163,7 @@ def render_chat(
     st: Any,
     session_state: MutableMapping[str, Any],
     workflow: InteractiveSummaryWorkflow,
-    output_preferences: Dict[str, Any] | None = None,
+    output_preferences: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Render chat history and route new chat input."""
     for message in session_state["messages"]:
@@ -183,7 +183,7 @@ def process_chat_input(
     session_state: MutableMapping[str, Any],
     workflow: InteractiveSummaryWorkflow,
     user_message: str,
-    output_preferences: Dict[str, Any] | None = None,
+    output_preferences: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Handle one chat turn and auto-start draft generation when ready."""
     trace_metadata = {
@@ -210,7 +210,7 @@ def process_chat_input(
 
 def apply_output_preferences_to_message(
     user_message: str,
-    output_preferences: Dict[str, Any] | None,
+    output_preferences: Optional[Dict[str, Any]],
     workflow: InteractiveSummaryWorkflow,
 ) -> str:
     """Fold sidebar output preferences into intake messages for Julius."""
@@ -420,8 +420,18 @@ def _unique_names(names: list[str]) -> list[str]:
     return unique
 
 
-def run_app(st_module: Any | None = None) -> None:
+def _has_streamlit_context() -> bool:
+    """Return whether Streamlit attached a script context to this thread."""
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+    except Exception:
+        return False
+    return get_script_run_ctx(suppress_warning=True) is not None
+
+
+def run_app(st_module: Optional[Any] = None) -> None:
     """Run the Streamlit app."""
+    using_injected_module = st_module is not None
     if st_module is None:
         try:
             import streamlit as st_module
@@ -429,6 +439,9 @@ def run_app(st_module: Any | None = None) -> None:
             raise RuntimeError("Install streamlit with `pip install -r requirements.txt`.") from exc
 
     st = st_module
+    if not using_injected_module and not _has_streamlit_context():
+        raise RuntimeError("Run the UI with `python app.py` or `streamlit run app.py`.")
+
     st.set_page_config(page_title="Julius ArXiv Editor", layout="wide")
     st.title("Julius ArXiv Editor")
     workflow = ensure_workflow_state(st.session_state)
@@ -474,7 +487,7 @@ def _smoke_specialist_tools() -> list[AgentTool]:
     def discover_topics(
         papers: Any,
         min_topic_size: int = 2,
-        num_topics: int | None = None,
+        num_topics: Optional[int] = None,
         representative_papers_per_topic: int = 5,
         use_openai_representation: bool = True,
     ) -> Dict[str, Any]:

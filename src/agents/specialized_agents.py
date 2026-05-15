@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Type
 from src.agents.base_agent import AgentTool, BaseAgent
 from src.agents.tools.base_tools import get_base_tools
 from src.agents.tools.metaphor_tool import get_metaphor_tool
+from src.processing.topic_modeler import MAX_REPRESENTATIVE_PAPERS_PER_TOPIC
 
 
 DEFAULT_SPECIALIST_MIN_PAPERS = 60
@@ -116,6 +117,7 @@ class SpecializedAgent(BaseAgent):
             "categories": categories,
             "topics": topic_result.get("topics", []),
             "topic_summaries": topic_summaries,
+            "topic_discovery": topic_result,
             "status": "completed" if topic_summaries else "needs_data",
         }
 
@@ -183,7 +185,10 @@ class SpecializedAgent(BaseAgent):
                 "num_topics": max_topics,
                 "representative_papers_per_topic": max(
                     1,
-                    min(int(summary_request.get("max_papers") or 5), 5),
+                    min(
+                        int(summary_request.get("max_papers") or MAX_REPRESENTATIVE_PAPERS_PER_TOPIC),
+                        MAX_REPRESENTATIVE_PAPERS_PER_TOPIC,
+                    ),
                 ),
                 "use_openai_representation": True,
             },
@@ -205,11 +210,16 @@ class SpecializedAgent(BaseAgent):
         summary_request: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         topics = list(topic_result.get("topics") or [])
-        if not topics and papers:
+        if not topics and papers and topic_result.get("status") != "failed":
             topics = [
                 {
                     "title": summary_request.get("topic_query") or f"{self.name} research",
-                    "representative_papers": papers[: int(summary_request.get("max_papers") or 5)],
+                    "representative_papers": papers[
+                        : min(
+                            int(summary_request.get("max_papers") or MAX_REPRESENTATIVE_PAPERS_PER_TOPIC),
+                            MAX_REPRESENTATIVE_PAPERS_PER_TOPIC,
+                        )
+                    ],
                     "paper_count": len(papers),
                     "keywords": [],
                 }
@@ -217,7 +227,10 @@ class SpecializedAgent(BaseAgent):
 
         summaries = []
         for topic in topics:
-            representative_papers = topic.get("representative_papers") or papers[:5]
+            representative_papers = (
+                topic.get("representative_papers")
+                or papers[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]
+            )[:MAX_REPRESENTATIVE_PAPERS_PER_TOPIC]
             if not representative_papers:
                 continue
             summary = self.execute_tool(
@@ -227,7 +240,7 @@ class SpecializedAgent(BaseAgent):
                     "topic": topic.get("title") or "Discovered topic",
                     "max_papers": min(
                         len(representative_papers),
-                        int(summary_request.get("max_papers") or 5),
+                        int(summary_request.get("max_papers") or MAX_REPRESENTATIVE_PAPERS_PER_TOPIC),
                     ),
                 },
             )
