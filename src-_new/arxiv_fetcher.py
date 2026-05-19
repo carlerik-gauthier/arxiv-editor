@@ -6,10 +6,12 @@ to fetch research papers with proper rate limiting and error handling.
 """
 
 import logging
-import os
+import re
 import time
-from dataclasses import dataclass
+from io import BytesIO
+import tarfile
 from datetime import datetime, timedelta
+import gzip
 from pathlib import Path
 from typing import List, Optional
 
@@ -41,6 +43,18 @@ class PDFDownloadError(ArxivFetcherError):
 
 class PDFExtractionError(ArxivFetcherError):
     """Raised when PDF text extraction fails."""
+
+    pass
+
+
+class SourceDownloadError(ArxivFetcherError):
+    """Raised when LaTeX source download fails."""
+
+    pass
+
+
+class SourceExtractionError(ArxivFetcherError):
+    """Raised when LaTeX source extraction fails."""
 
     pass
 
@@ -499,6 +513,79 @@ class ArxivFetcher:
         # This should not be reached
         raise PDFDownloadError(f"Failed to download PDF for paper {paper_id}")
 
+    def fetch_paper_source(self, paper_id: str) -> bytes:
+        """
+        Fetch a paper's LaTeX source archive from ArXiv without saving it to disk.
+
+        Args:
+            paper_id: The ArXiv ID of the paper (e.g., "2301.12345").
+
+        Returns:
+            Raw source archive bytes returned by ArXiv.
+
+        Raises:
+            SourceDownloadError: If the source is unavailable or the request fails.
+        """
+        source_url = f"https://arxiv.org/e-print/{paper_id}"
+        logger.info(f"Fetching LaTeX source for paper {paper_id} from {source_url}")
+
+        retries = 0
+        while retries <= self.max_retries:
+            try:
+                self._wait_for_rate_limit()
+
+                response = requests.get(
+                    source_url,
+                    timeout=60,
+                    headers={"User-Agent": "ArxivFetcher/1.0 (Research Tool)"},
+                )
+
+                if response.status_code in {403, 404, 410}:
+                    raise SourceDownloadError(
+                        f"LaTeX source unavailable for paper {paper_id}: HTTP {response.status_code}"
+                    )
+
+                response.raise_for_status()
+
+                if not response.content:
+                    raise SourceDownloadError(f"Empty LaTeX source response for paper {paper_id}")
+
+                # ArXiv may return an HTML page for unavailable sources; treat that as failure.
+                content_prefix = response.content[:256].lstrip().lower()
+                if content_prefix.startswith(b"<!doctype html") or content_prefix.startswith(b"<html"):
+                    raise SourceDownloadError(
+                        f"LaTeX source unavailable for paper {paper_id}: received HTML response"
+                    )
+
+                return response.content
+
+            except SourceDownloadError:
+                raise
+
+            except requests.exceptions.HTTPError as e:
+                retries += 1
+                if retries > self.max_retries:
+                    raise SourceDownloadError(
+                        f"Failed to fetch LaTeX source for paper {paper_id} "
+                        f"after {self.max_retries} retries: {e}"
+                    ) from e
+                time.sleep(self.retry_delay * retries)
+
+            except requests.exceptions.RequestException as e:
+                retries += 1
+                if retries > self.max_retries:
+                    raise SourceDownloadError(
+                        f"Network error fetching LaTeX source for paper {paper_id}: {e}"
+                    ) from e
+                time.sleep(self.retry_delay * retries)
+
+            except Exception as e:
+                raise SourceDownloadError(
+                    f"Unexpected error fetching LaTeX source for paper {paper_id}: {e}"
+                ) from e
+
+        raise SourceDownloadError(f"Failed to fetch LaTeX source for paper {paper_id}")
+
     def extract_text_from_pdf(self, pdf_path: Path) -> str:
         """
         Extract text content from a PDF file.
@@ -553,6 +640,69 @@ class ArxivFetcher:
             logger.error(f"Failed to extract text from PDF {pdf_path}: {e}")
             raise PDFExtractionError(f"Failed to extract text from PDF {pdf_path}: {e}") from e
 
+    def extract_markdown_from_source(self, source_bytes: bytes) -> str:
+        """
+        Extract markdown text from an ArXiv LaTeX source archive.
+
+        Args:
+            source_bytes: Raw bytes returned by the ArXiv e-print endpoint.
+
+        Returns:
+            Markdown text extracted from the paper's main LaTeX document.
+
+        Raises:
+            SourceExtractionError: If no parseable LaTeX document is found.
+        """
+        latex_documents = self._extract_latex_documents(source_bytes)
+        if not latex_documents:
+            raise SourceExtractionError("No LaTeX documents found in source archive")
+
+        _, main_document = self._select_main_latex_document(latex_documents)
+        markdown = self._latex_to_markdown(main_document)
+        if not markdown.strip():
+            raise SourceExtractionError("Extracted LaTeX source did not produce markdown text")
+        return markdown
+
+    def fetch_paper_markdown(
+        self,
+        paper_id: str,
+        output_dir: str = "data/pdfs",
+        force_redownload: bool = False,
+    ) -> str:
+        """
+        Fetch a paper as markdown text, preferring LaTeX source over PDF extraction.
+
+        The method first requests the ArXiv e-print source. If source retrieval or
+        source parsing fails, it falls back to the existing PDF download and text
+        extraction pipeline, then normalizes the result into markdown.
+
+        Args:
+            paper_id: The ArXiv ID of the paper (e.g., "2301.12345").
+            output_dir: Directory to save the fallback PDF. Defaults to "data/pdfs".
+            force_redownload: If True, redownload the fallback PDF even if cached.
+
+        Returns:
+            Paper content as markdown text.
+        """
+        try:
+            source_bytes = self.fetch_paper_source(paper_id)
+            markdown = self.extract_markdown_from_source(source_bytes)
+            logger.info(f"Extracted markdown from LaTeX source for paper {paper_id}")
+            return markdown
+        except (SourceDownloadError, SourceExtractionError) as e:
+            logger.warning(
+                f"Falling back to PDF extraction for paper {paper_id} because source "
+                f"processing failed: {e}"
+            )
+
+        pdf_path = self.download_paper_pdf(
+            paper_id=paper_id,
+            output_dir=output_dir,
+            force_redownload=force_redownload,
+        )
+        text = self.extract_text_from_pdf(pdf_path)
+        return self._plain_text_to_markdown(text)
+
     def download_and_extract_paper(
         self,
         paper_id: str,
@@ -587,3 +737,229 @@ class ArxivFetcher:
         text = self.extract_text_from_pdf(pdf_path)
 
         return pdf_path, text
+
+    def _extract_latex_documents(self, source_bytes: bytes) -> dict[str, str]:
+        """Return decoded LaTeX documents from raw ArXiv source bytes."""
+        documents: dict[str, str] = {}
+
+        try:
+            with tarfile.open(fileobj=BytesIO(source_bytes), mode="r:*") as archive:
+                for member in archive.getmembers():
+                    if not member.isfile():
+                        continue
+                    name = member.name.lstrip("./")
+                    if not name.lower().endswith((".tex", ".ltx")):
+                        continue
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        continue
+                    documents[name] = extracted.read().decode("utf-8", errors="ignore")
+        except tarfile.TarError:
+            pass
+
+        if documents:
+            return documents
+
+        for name, payload in self._iter_text_source_candidates(source_bytes):
+            if "\\documentclass" in payload or "\\begin{document}" in payload:
+                documents[name] = payload
+
+        return documents
+
+    def _iter_text_source_candidates(self, source_bytes: bytes) -> list[tuple[str, str]]:
+        """Yield plausible decoded text payloads from raw or gzipped source bytes."""
+        candidates = [("source.tex", source_bytes)]
+
+        if source_bytes[:2] == b"\x1f\x8b":
+            try:
+                candidates.append(("source.tex", gzip.decompress(source_bytes)))
+            except OSError:
+                logger.debug("Failed to decompress gzipped source payload")
+
+        decoded_candidates: list[tuple[str, str]] = []
+        for name, payload in candidates:
+            if payload.startswith(b"%PDF"):
+                continue
+            decoded_candidates.append((name, payload.decode("utf-8", errors="ignore")))
+
+        return decoded_candidates
+
+    def _select_main_latex_document(self, documents: dict[str, str]) -> tuple[str, str]:
+        """Choose the most likely main LaTeX file from a source archive."""
+        best_name = ""
+        best_content = ""
+        best_score = -1
+
+        for name, content in documents.items():
+            lowered_name = name.lower()
+            score = 0
+            if "\\documentclass" in content:
+                score += 10
+            if "\\begin{document}" in content:
+                score += 5
+            if "\\title{" in content:
+                score += 2
+            if any(token in lowered_name for token in ("main", "paper", "ms", "manuscript")):
+                score += 3
+            score -= len(lowered_name) / 1000
+
+            if score > best_score:
+                best_name = name
+                best_content = content
+                best_score = score
+
+        if not best_content:
+            raise SourceExtractionError("No main LaTeX document found in source archive")
+
+        return best_name, best_content
+
+    def _latex_to_markdown(self, latex_text: str) -> str:
+        """Convert a subset of LaTeX into readable markdown."""
+        text = latex_text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"(?<!\\)%.*", "", text)
+
+        title = self._extract_latex_command_argument(text, "title")
+        author = self._extract_latex_command_argument(text, "author")
+        abstract = self._extract_latex_environment(text, "abstract")
+
+        body_match = re.search(r"\\begin\{document\}(.*?)\\end\{document\}", text, re.DOTALL)
+        body = body_match.group(1) if body_match else text
+        body = re.sub(r"\\maketitle\b", "", body)
+        body = re.sub(r"\\begin\{abstract\}.*?\\end\{abstract\}", "", body, flags=re.DOTALL)
+
+        markdown_parts: list[str] = []
+        if title:
+            markdown_parts.append(f"# {self._latex_inline_to_text(title)}")
+        if author:
+            markdown_parts.append(self._latex_inline_to_text(author))
+        if abstract:
+            markdown_parts.append("## Abstract")
+            markdown_parts.append(self._latex_block_to_text(abstract))
+
+        body = self._convert_latex_structure_to_markdown(body)
+        body = self._latex_block_to_text(body)
+        if body:
+            markdown_parts.append(body)
+
+        return self._cleanup_markdown("\n\n".join(part for part in markdown_parts if part))
+
+    def _convert_latex_structure_to_markdown(self, text: str) -> str:
+        """Convert structural LaTeX commands into markdown markers."""
+        replacements = (
+            (r"\\section\*?\{([^{}]+)\}", r"\n\n## \1\n\n"),
+            (r"\\subsection\*?\{([^{}]+)\}", r"\n\n### \1\n\n"),
+            (r"\\subsubsection\*?\{([^{}]+)\}", r"\n\n#### \1\n\n"),
+            (r"\\paragraph\*?\{([^{}]+)\}", r"\n\n**\1.** "),
+            (r"\\begin\{itemize\}", "\n"),
+            (r"\\end\{itemize\}", "\n"),
+            (r"\\begin\{enumerate\}", "\n"),
+            (r"\\end\{enumerate\}", "\n"),
+            (r"\\item\s+", "\n- "),
+            (r"\\begin\{equation\*?\}", "\n$$\n"),
+            (r"\\end\{equation\*?\}", "\n$$\n"),
+            (r"\\\[", "\n$$\n"),
+            (r"\\\]", "\n$$\n"),
+            (r"\\\\", "\n"),
+        )
+
+        for pattern, replacement in replacements:
+            text = re.sub(pattern, replacement, text)
+
+        return text
+
+    def _latex_block_to_text(self, text: str) -> str:
+        """Best-effort conversion of LaTeX text blocks into markdown-friendly text."""
+        converted = text
+
+        inline_patterns = (
+            (r"\\textbf\{([^{}]*)\}", r"**\1**"),
+            (r"\\textit\{([^{}]*)\}", r"*\1*"),
+            (r"\\emph\{([^{}]*)\}", r"*\1*"),
+            (r"\\underline\{([^{}]*)\}", r"\1"),
+            (r"\\url\{([^{}]*)\}", r"\1"),
+            (r"\\href\{([^{}]*)\}\{([^{}]*)\}", r"[\2](\1)"),
+        )
+
+        for pattern, replacement in inline_patterns:
+            converted = re.sub(pattern, replacement, converted)
+
+        command_patterns = (
+            (r"\\(?:cite|citet|citep|eqref|ref)\*?(?:\[[^\]]*\])?\{[^{}]*\}", "[ref]"),
+            (r"\\label\{[^{}]*\}", ""),
+            (r"\\(?:footnote|thanks)\{([^{}]*)\}", r" (\1)"),
+            (r"\\(?:includegraphics|input|bibliography)\*?(?:\[[^\]]*\])?\{[^{}]*\}", ""),
+            (r"\\(?:begin|end)\{[^{}]*\}", ""),
+        )
+
+        for pattern, replacement in command_patterns:
+            converted = re.sub(pattern, replacement, converted)
+
+        for _ in range(5):
+            updated = re.sub(
+                r"\\[a-zA-Z@]+\*?(?:\[[^\]]*\])?\{([^{}]*)\}",
+                r"\1",
+                converted,
+            )
+            if updated == converted:
+                break
+            converted = updated
+
+        converted = re.sub(r"\\[a-zA-Z@]+\*?(?:\[[^\]]*\])?", "", converted)
+        converted = converted.replace("{", "").replace("}", "")
+        return converted
+
+    def _plain_text_to_markdown(self, text: str) -> str:
+        """Normalize extracted plain text into lightweight markdown paragraphs."""
+        lines = [line.strip() for line in text.splitlines()]
+        paragraphs: list[str] = []
+        current_paragraph: list[str] = []
+
+        for line in lines:
+            if not line:
+                if current_paragraph:
+                    paragraphs.append(" ".join(current_paragraph))
+                    current_paragraph = []
+                continue
+
+            if re.match(r"^(abstract|introduction|conclusion|references)\b", line, re.IGNORECASE):
+                if current_paragraph:
+                    paragraphs.append(" ".join(current_paragraph))
+                    current_paragraph = []
+                paragraphs.append(f"## {line}")
+                continue
+
+            current_paragraph.append(line)
+
+        if current_paragraph:
+            paragraphs.append(" ".join(current_paragraph))
+
+        return self._cleanup_markdown("\n\n".join(paragraphs))
+
+    def _extract_latex_command_argument(self, text: str, command: str) -> str:
+        """Extract a simple command argument like \\title{...}."""
+        match = re.search(
+            rf"\\{command}\*?(?:\[[^\]]*\])?\{{(.*?)\}}",
+            text,
+            re.DOTALL,
+        )
+        return match.group(1).strip() if match else ""
+
+    def _extract_latex_environment(self, text: str, environment: str) -> str:
+        """Extract the contents of a LaTeX environment."""
+        match = re.search(
+            rf"\\begin\{{{environment}\}}(.*?)\\end\{{{environment}\}}",
+            text,
+            re.DOTALL,
+        )
+        return match.group(1).strip() if match else ""
+
+    def _latex_inline_to_text(self, text: str) -> str:
+        """Convert inline LaTeX to text and collapse extra whitespace."""
+        return re.sub(r"\s+", " ", self._latex_block_to_text(text)).strip()
+
+    def _cleanup_markdown(self, text: str) -> str:
+        """Normalize whitespace and trim noisy blank lines in markdown output."""
+        cleaned = re.sub(r"[ \t]+\n", "\n", text)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        return cleaned.strip()

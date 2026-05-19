@@ -158,6 +158,7 @@ arxiv-editor/
 - ✅ Step 2.1: Basic API integration (`ArxivFetcher` class with `fetch_by_category`, `parse_paper_metadata`)
 - ✅ Step 2.2: Multi-category fetching with minimum threshold
 - ✅ Step 2.3: PDF retrieval (`download_paper_pdf`, `extract_text_from_pdf`, `download_and_extract_paper`)
+- ✅ Step 2.4: Source-first markdown extraction (`fetch_paper_source`, `extract_markdown_from_source`, `fetch_paper_markdown`)
 
 **Phase 3: AI Agent Architecture with Tools and Hand-offs**
 - ✅ Step 3.1: Base Agent Class and Tool System
