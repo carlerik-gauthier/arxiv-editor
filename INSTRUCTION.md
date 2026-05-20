@@ -10,6 +10,8 @@
 - You must complete a phase, marked with ✅, before moving to the next one
 - You must not alter the old_src folder
 - refer to src_new/arxiv_fetcher.py and src_new/topic_finder.py whenever it is needed
+- You must be concise
+- you must ignore old_src
 
 # Plan
 ## Phase 1: Agent Chris creation
@@ -19,6 +21,7 @@
 - `ChrisAgent` has one tool: arxiv_fetcher_tool. It returns a list of Papers
     - It is used whenever there is no Paper from Probability Theory in the date ranges requested by the user
     - If the number of fecthed paper is less than a predined threshold, then returns nothing and explain why 
+    - Depending on the request, `ChrisAgent` fetches paper from a subset of available ArXiv or to all 
 ## Phase 2: Provide new tools to ChrisAgent
 - Add a second tool to `ChrisAgent`: find_topic_tools
     - Use it whenever you need to extract topics from an already fetched list of Papers
