@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from chris_agent_phase1 import run_chris_agent
+from src_new.chris_agent_phase1 import run_chris_agent
 
 
 def _init_state() -> None:
@@ -22,7 +22,7 @@ def run_app() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    prompt = st.chat_input("Ask ChrisAgent (include dates like 2026-01-01 to 2026-02-01)")
+    prompt = st.chat_input("Ask ChrisAgent")
     if not prompt:
         return
 
@@ -32,8 +32,13 @@ def run_app() -> None:
 
     with st.chat_message("assistant"):
         with st.spinner("ChrisAgent is working..."):
-            reply = run_chris_agent(prompt)
+            result = run_chris_agent(prompt)
+        reply = str(result.get("reply", ""))
         st.markdown(reply)
+        tool_parameters = result.get("tool_parameters", [])
+        if tool_parameters:
+            st.markdown("**Tool Parameters**")
+            st.json(tool_parameters)
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
 

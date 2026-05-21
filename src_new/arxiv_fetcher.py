@@ -18,7 +18,7 @@ from typing import List, Optional
 import arxiv
 import requests
 from pypdf import PdfReader
-from data_object import Paper
+from src_new.data_object import Paper
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from bertopic.representation import OpenAI as OpenAIRepresentation
 from bertopic.representation import MaximalMarginalRelevance
 from dotenv import load_dotenv
 from typing import List
-from data_object import Paper
+from src_new.data_object import Paper
 
 load_dotenv(override=True)
 
