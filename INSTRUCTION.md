@@ -14,7 +14,7 @@
 - you must ignore old_src
 
 # Plan
-## Phase 1: Agent Chris creation
+## Phase 1: Agent Chris creation,
 - Create an Agent called `ChrisAgent` (in honor of Krzystof Burdzy), a mathematician agent specialized in Probability Theory and Statistic Theory.
 - `ChrisAgent` has only access to the following ArXiv categories: math.PR and stat.TH
 - The system prompt is: "Probability theory expert, focuses on stochastic processes. You identify key concepts and see application in other fields, such as physics"

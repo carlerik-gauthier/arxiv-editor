@@ -20,12 +20,38 @@ CHRIS_SYSTEM_PROMPT = (
     "Probability theory expert, focuses on stochastic processes. "
     "You identify key concepts and see application in other fields, such as physics"
 )
-CHRIS_CATEGORIES = ("math.PR", "stat.TH")
-DEFAULT_FETCH_THRESHOLD = 3
+CHRIS_CATEGORIES = ("math.PR", "math.ST")
+DEFAULT_FETCH_THRESHOLD = 50
 DEFAULT_MAX_RESULTS = 1000
 DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_OUTPUT_DIR = Path("data/paper")
 
+@function_tool(name_override="check_paper_tool")
+def check_paper_tool(
+    start_date: str,
+    end_date: str,
+    categories: List[str]
+) -> Dict[str, Any]:
+    "Use this tool to check if Probability Theory paper in the requested date range have already been collected"
+    if len(categories)==0:
+        categories = CHRIS_CATEGORIES
+    output_dir = Path(os.getenv("ARXIV_FETCH_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
+    filename = (
+        "arxiv_fetch_chris_"
+        f"{'_'.join(categories)}_"
+        f"{start_date}_to_{end_date}.csv"
+    )
+    output_path = output_dir / filename
+    if os.path.exists(output_path):
+        return {
+            "status": "success",
+            "existence": "Data is already available"
+        }
+    else:
+        return {
+            "status": "success",
+            "existence": "Data is not available. Need to fetch it"
+        }
 
 @function_tool(name_override="arxiv_fetcher_tool")
 def arxiv_fetcher_tool(
@@ -36,7 +62,7 @@ def arxiv_fetcher_tool(
     min_threshold: int = DEFAULT_FETCH_THRESHOLD,
 ) -> Dict[str, Any]:
     """
-    Fetch papers in ChrisAgent's allowed categories (math.PR, stat.TH).
+    Fetch papers in ChrisAgent's allowed categories (math.PR, math.ST).
 
     Use this tool when there is no Probability Theory paper in the requested date range.
     If fetched paper count is below `min_threshold`, return no papers and explain why.
@@ -77,6 +103,7 @@ def arxiv_fetcher_tool(
     output_dir = Path(os.getenv("ARXIV_FETCH_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
     filename = (
         "arxiv_fetch_chris_"
+        f"{'_'.join(categories)}_"
         f"{start.date().isoformat()}_to_{end.date().isoformat()}.csv"
     )
     output_path = output_dir / filename
@@ -108,25 +135,29 @@ def build_chris_agent() -> Agent:
         instructions=(
             f"{CHRIS_SYSTEM_PROMPT}\n"
             f"Allowed categories only: {', '.join(CHRIS_CATEGORIES)}.\n"
+            "To check if robability Theory nor Statistical Theory paper have already beed collected in the requested date range"
+            "call `check_paper_tool`"
             "When no Probability Theory nor Statistical Theory paper exists in the requested date range, call "
-            "`arxiv_fetcher_tool`."
+            "`arxiv_fetcher_tool`." 
         ),
-        tools=[arxiv_fetcher_tool],
+        tools=[check_paper_tool, arxiv_fetcher_tool],
         model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
     )
 
 
 def run_chris_agent(message: str) -> Dict[str, Any]:
     """Run one ChrisAgent turn with SDK tracing enabled."""
-    # start_date, end_date = _extract_date_range(message) 
-    end_date = datetime.now().date().isoformat()
-    start_date = (datetime.now()-timedelta(days=6)).date().isoformat()
-    categories = CHRIS_CATEGORIES # _get_arxiv_categories(message)
+    start_date, end_date = _extract_date_range(message) 
+    # end_date = datetime.now().date().isoformat()
+    # start_date = (datetime.now()-timedelta(days=6)).date().isoformat()
+    # categories = CHRIS_CATEGORIES # 
+    categories = _get_arxiv_categories(message)
     enriched_message = (
         f"{message}\n\n"
         f"Requested date range to use if needed: start_date={start_date}, end_date={end_date}.\n"
         f"Use categories={categories} when calling arxiv_fetcher_tool."
     )
+
     agent = build_chris_agent()
     with trace(
         "phase1-chris-agent-run",
@@ -198,12 +229,16 @@ def _extract_date_range_with_llm(message: str) -> Dict[str, Optional[str]]:
     """Use an LLM to extract ISO date bounds from a user message."""
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    today = datetime.now().date()
+    day_name = today.strftime("%A")
+    month_name = today.strftime("%B")
     prompt = (
         "Extract an explicit date range from the user message.\n"
         "Return JSON only with this exact schema: "
         "{\"start_date\":\"YYYY-MM-DD or null\",\"end_date\":\"YYYY-MM-DD or null\"}.\n"
+        f"Today is {day_name}, {month_name} {today.day}, {today.year}"
         "Rule:\n"
-        f"-if there is a relative date, then end_date is {datetime.now().date().isoformat()}\n"
+        f"-if there is a relative date, then end_date is {today.isoformat()}\n"
         "-if there is not any date intent in the message, then returns null for start_date and end_date\n"
         f"User message: {message}"
     )
@@ -246,13 +281,13 @@ def _classify_categories_with_llm(message: str) -> List[str]:
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     prompt = (
         "Classify the user's message into arXiv categories from this allowed set only: "
-        "['math.PR', 'stat.TH'].\n"
+        f"{list(CHRIS_CATEGORIES)}.\n"
         "Return JSON only with this schema: {\"categories\": <list of predicted categories>}\n" # [<category_prediction>]}\n"
         "Information:\n"
         # "- Include a category only if clearly requested or strongly implied.\n"
         # # "- If neither is requested, return both categories.\n"
         "- 'math.PR' contains papers in proability.\n"
-        "- 'stat.TH' contains papers in statistics.\n"
+        "- 'math.ST' contains papers in statistics.\n"
         # "- Never return any other category.\n"
         f"User message: {message}"
     )

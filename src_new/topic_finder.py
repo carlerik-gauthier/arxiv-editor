@@ -31,9 +31,11 @@ The topic is described by the following keywords: [KEYWORDS]
 Based on the information above, extract a short topic label in the following format:
 topic: <topic label>
 """
-
-def compute_topics(papers: List[Paper], n_topics: int=1, n_papers_per_topic: int=3):
-    docs = [f"{p.title} -- {p.summary}" for p in papers]
+# FIX papers to paper_path; and papers is now a pandas dataframe
+def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
+    data = pd.read_csv(path)
+    data['docs'] = data[["title", "summary"]].apply(lambda arr: f"{arr[0]} -- {arr[1]}")
+    docs = data['docs'].values
     api_key = os.getenv('OPENAI_API_KEY')
     client = openai.OpenAI(api_key=api_key)
     tokenizer= tiktoken.encoding_for_model("gpt-4o-mini")
@@ -79,6 +81,8 @@ def compute_topics(papers: List[Paper], n_topics: int=1, n_papers_per_topic: int
         )
     
     label, prob = topic_model.fit_transform(docs)
+    data['topic'] = label
+    data['probability'] = prob
     # get topic info and keep top n_topics
     topic_info_base = topic_model.get_topic_info()
 
@@ -87,19 +91,19 @@ def compute_topics(papers: List[Paper], n_topics: int=1, n_papers_per_topic: int
     topic_info.reset_index(drop=True, inplace=True)
     topic_info.rename(columns={"Topic": "topic"}, inplace=True)
     # find the most representative papers defined as the top n paper per topic
-    df = pd.DataFrame(data={
+    # df = pd.DataFrame(data={
         # "arxiv_id": [p.arxiv_id for p in papers],
-        "paper": papers,
-        "topic": label,
-        "probabilities": prob
-    })
+    #     "paper": papers,
+    #     "topic": label,
+    #     "probabilities": prob
+    # })
 
-    paper_topic_df = df.merge(topic_info[["topic"]], how="inner", on="topic")
-    paper_topic_df['rk'] = paper_topic_df.sort_values(['probabilities'], ascending=[False]) \
+    paper_topic_df = data.merge(topic_info[["topic"]], how="inner", on="topic")
+    paper_topic_df['rk'] = paper_topic_df.sort_values(['probability'], ascending=[False]) \
              .groupby(['topic']) \
              .cumcount() + 1
     paper_topic_df = deepcopy(paper_topic_df[paper_topic_df.rk<=n_papers_per_topic]).reset_index(drop=True)
-    representative_papers = paper_topic_df[["topic", "paper"]].groupby(by="topic").apply(list)
+    representative_papers = paper_topic_df[["topic", "arxiv_id"]].groupby(by="topic").apply(list)
 
     # combine all infos to return a list of dictionaries. The list length is equal to n_topics and 
     # dictionaries are like
@@ -113,6 +117,6 @@ def compute_topics(papers: List[Paper], n_topics: int=1, n_papers_per_topic: int
     final_df["topic_description"] = final_df["Representation"].apply(lambda arr: arr[0])
     final_df["topic_title"] = final_df["topic_title_"].apply(lambda arr: arr[0])
     final_df = deepcopy(final_df[["topic_title", "Count", "topic_description", "paper"]]).rename(
-        columns={"Count": "nb_papers", "paper": "representative_papers"})
+        columns={"Count": "nb_papers", "arxiv_id": "representative_papers_arxiv_id"})
     
     return final_df.to_dict("records")
