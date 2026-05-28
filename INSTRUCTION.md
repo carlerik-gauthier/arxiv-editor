@@ -14,9 +14,9 @@
 - you must ignore old_src
 
 # Plan
-## Phase 1: Agent Chris creation,
+## Phase 1: Agent Chris creation ✅
 - Create an Agent called `ChrisAgent` (in honor of Krzystof Burdzy), a mathematician agent specialized in Probability Theory and Statistic Theory.
-- `ChrisAgent` has only access to the following ArXiv categories: math.PR and stat.TH
+- `ChrisAgent` has only access to the following ArXiv categories: math.PR and math.ST
 - The system prompt is: "Probability theory expert, focuses on stochastic processes. You identify key concepts and see application in other fields, such as physics"
 - `ChrisAgent` has one tool: arxiv_fetcher_tool. It returns a list of Papers
     - It is used whenever there is no Paper from Probability Theory in the date ranges requested by the user
@@ -24,28 +24,32 @@
     - Depending on the request, `ChrisAgent` fetches paper from a subset of available ArXiv or to all 
 ## Phase 2: Provide new tools to ChrisAgent
 - Add a second tool to `ChrisAgent`: find_topic_tools
-    - Use it whenever you need to extract topics from an already fetched list of Papers
+    - Use it whenever you need to extract topics from an already fetched list of Papers. As input, you need a csv location where the papers' metadata are stored.
 - Add a third tool to `ChrisAgent`: extract_main_result_tool
-    - Use it whenever you need to access the entire Paper content to find and explain the main results
-## Phase 3: Agent Julius creation
+    - Use it whenever you need to access the entire paper content to find and explain the main results. You must download it from Arxiv and use arxiv_id to 
+## Phase 3: Finalize ChrisAgent
+- combine chris_agent_phase1 and chris_agent_phase2 into a unique file chris_agent.py. You are not allowed to import from chris_agent_phase1 or chris_agent_phase2. You must combine them
+
+## Phase 4: Agent Julius creation
 - Create an Agent called `JuliusAgent` (in honor of Julius Springer), founder of the Springer book edition.
-    - System prompt: Editor and coordinator role, responsible for planning, delegation and generating the one-pager
-    - Has `ChrisAgent` as a tool. Call it whenever you need content related to Probability or Statistic queries. 
+    - System prompt: Editor and coordinator role, responsible for planning, delegation and generating the one-pager. The one-pager must meet the user request, including tone. The one-pager must be engaging. You can use emojis to make it appealing. You must remain professional. Unless stated otherwise by the user, the one-pager is aimed for a LinkedIn post.
+    - Has `ChrisAgent` as a tool. Call it whenever you need content related to Probability or Statistic queries. For other domains, reply politely you don't have access to it
 - `JuliusAgent` determines how many topics he need from `ChrisAgent`.
 - `JulisAgent` owns the editorial workflow and interacts with the user and is responsible for the Conversation flow:
     - Parse user request (date range, topics, preferences)
     - Create execution plan with agent assignments
     - Coordinate parallel agent execution where possible
-    - Synthesize results into coherent one-pager
-## Phase 4: Agent Michel Creation
+    - create an engaging one-pager structure
+    - Synthesize results into a coherent one-pager
+## Phase 5: Agent Michel Creation
 - Create an Agent called `MichelAgent` (in honor of Michel Benaim), a mathematician with outstanding skills to provide mathematical intuition on complex mathematical concepts to non-experts using examples and metaphor
 - `MichelAgent` has 3 tools:
     - make_clearer_tool: use it when reformulation is needed ti vulgarize it
     - provide_intuition_tool: use it when examples and intuition are requested to explain a concept
     - metaphor_tool: use it to provide metaphors that are easier to understand when explaining concepts
 - Add `MichelAgent` as a tool from `JuliusAgent`
-    - `JuliusAgent` calls `MichelAgent` when vulgarization is needed
-## Phase 5: Create the other specialized agents
+    - `JuliusAgent` calls `MichelAgent` when vulgarization is needed. 
+## Phase 6: Create the other specialized agents
 - Create the following remaining specialized agent
     - `AlainAgent` (in honor of Alain Valette) is a mathematician agent specialized in Algebra (math.AG, math.RA, math.GR). He communicates with passion
         - System prompt: Algebraic structures specialist
@@ -61,7 +65,7 @@
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
 - All those agents have the same tools as `ChrisAgent`. The difference lies in their expertise fields
 - Add those agents as tools for `JuliusAgent`
-## Phase 6: Review, Refactor, Unit test and Document
+## Phase 7: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
 - The code must be easy to maintain for future development
 - Refactor the code whereever it is needed to prevent code duplication
