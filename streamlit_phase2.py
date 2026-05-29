@@ -2,9 +2,37 @@
 
 from __future__ import annotations
 
+import logging
+import warnings
+
 import streamlit as st
 
 from src_new.chris_agent_phase2 import run_chris_agent_phase2
+
+
+class _TransformersPathAliasFilter(logging.Filter):
+    """Drop known noisy Transformers alias warnings about `__path__`."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not (
+            "Accessing `__path__`" in msg
+            and "Returning `__path__` instead" in msg
+            and "alias will be removed in future versions" in msg
+        )
+
+
+# Suppress noisy third-party deprecations in Streamlit startup logs.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Returning `__path__` instead\..*alias will be removed in future versions\..*",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"'cgi' is deprecated and slated for removal in Python 3\.13",
+    category=DeprecationWarning,
+)
+logging.getLogger("transformers").addFilter(_TransformersPathAliasFilter())
 
 
 def _init_state() -> None:

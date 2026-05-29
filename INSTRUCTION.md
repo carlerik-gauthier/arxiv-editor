@@ -72,3 +72,7 @@
 - generate the unit tests
 - Document all functions
 - Provide a documentation about the workflow and add a schema about the agentic system
+
+
+
+get topics of papers from 2026-05-19 to 2026-05-21

@@ -45,12 +45,14 @@ def check_paper_tool(
     if os.path.exists(output_path):
         return {
             "status": "success",
-            "existence": "Data is already available"
+            "existence": "Data is already available",
+            "csv_path": output_path
         }
     else:
         return {
             "status": "success",
-            "existence": "Data is not available. Need to fetch it"
+            "existence": "Data is not available. Need to fetch it",
+            "csv_path": ''
         }
 
 @function_tool(name_override="arxiv_fetcher_tool")

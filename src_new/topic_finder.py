@@ -6,7 +6,7 @@ from copy import deepcopy
 from sentence_transformers import SentenceTransformer
 from bertopic import BERTopic
 from bertopic.representation import OpenAI as OpenAIRepresentation
-from bertopic.representation import MaximalMarginalRelevance
+from bertopic.representation import MaximalMarginalRelevance, KeyBERTInspired
 from dotenv import load_dotenv
 from typing import List
 from src_new.data_object import Paper
@@ -34,12 +34,14 @@ topic: <topic label>
 # FIX papers to paper_path; and papers is now a pandas dataframe
 def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
     data = pd.read_csv(path)
-    data['docs'] = data[["title", "summary"]].apply(lambda arr: f"{arr[0]} -- {arr[1]}")
-    docs = data['docs'].values
+    data['docs'] = data[["title", "summary"]].apply(
+        lambda arr: f"{arr[0]} -- {arr[1]}", raw=True, axis=1
+        )
+    docs = list(data['docs'].values)
     api_key = os.getenv('OPENAI_API_KEY')
     client = openai.OpenAI(api_key=api_key)
     tokenizer= tiktoken.encoding_for_model("gpt-4o-mini")
-
+    main_representation = KeyBERTInspired()
     topic_summary_representation_model = [
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
@@ -48,7 +50,7 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
             prompt=summarization_prompt,
             chat=True,
             nr_docs=10,
-            doc_length=200,
+            doc_length=2000,
             diversity=0.3,
             tokenizer=tokenizer
             )
@@ -69,7 +71,8 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
             ]
     
     representation_models = {
-        "Main": topic_summary_representation_model,
+        "Main": main_representation,
+        "topic_summary_": topic_summary_representation_model,
         "topic_title_": topic_title_representation_model
     }
     embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -80,7 +83,9 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
         representation_model=representation_models
         )
     
-    label, prob = topic_model.fit_transform(docs)
+    topic_model.fit(docs)
+    
+    label, prob = topic_model.transform(docs) # fit_transform(docs)
     data['topic'] = label
     data['probability'] = prob
     # get topic info and keep top n_topics
@@ -99,11 +104,11 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
     # })
 
     paper_topic_df = data.merge(topic_info[["topic"]], how="inner", on="topic")
-    paper_topic_df['rk'] = paper_topic_df.sort_values(['probability'], ascending=[False]) \
-             .groupby(['topic']) \
+    paper_topic_df['rk'] = paper_topic_df.sort_values('probability', ascending=False) \
+             .groupby(by='topic') \
              .cumcount() + 1
     paper_topic_df = deepcopy(paper_topic_df[paper_topic_df.rk<=n_papers_per_topic]).reset_index(drop=True)
-    representative_papers = paper_topic_df[["topic", "arxiv_id"]].groupby(by="topic").apply(list)
+    representative_papers = paper_topic_df[["topic", "arxiv_id"]].groupby(by="topic")['arxiv_id'].apply(list).reset_index()
 
     # combine all infos to return a list of dictionaries. The list length is equal to n_topics and 
     # dictionaries are like
@@ -114,9 +119,10 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
     #     "representative_papers": <a list of length n_papers_per_topic of Paper object>
     # }
     final_df = topic_info.merge(representative_papers, on="topic", how="inner")
-    final_df["topic_description"] = final_df["Representation"].apply(lambda arr: arr[0])
+    final_df["topic_description"] = final_df["topic_summary_"].apply(lambda arr: arr[0])
     final_df["topic_title"] = final_df["topic_title_"].apply(lambda arr: arr[0])
-    final_df = deepcopy(final_df[["topic_title", "Count", "topic_description", "paper"]]).rename(
+    #return final_df, paper_topic_df, representative_papers
+    final_df = deepcopy(final_df[["topic_title", "Count", "topic_description", "arxiv_id"]]).rename(
         columns={"Count": "nb_papers", "arxiv_id": "representative_papers_arxiv_id"})
     
     return final_df.to_dict("records")

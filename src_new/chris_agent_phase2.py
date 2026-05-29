@@ -97,9 +97,20 @@ def extract_main_result_tool(
             "main_result": None,
         }
 
-    clipped = content[:max(1000, max_chars)]
     try:
-        main_result = _extract_main_result_with_llm(arxiv_id=arxiv_id, content=clipped)
+        effective_max_chars = max(1000, max_chars)
+        if len(content) <= effective_max_chars:
+            main_result = _extract_main_result_with_llm(arxiv_id=arxiv_id, content=content)
+        else:
+            chunks = _split_text_into_chunks(content, effective_max_chars)
+            chunk_results: List[str] = []
+            for idx, chunk in enumerate(chunks, start=1):
+                chunk_result = _extract_main_result_with_llm(
+                    arxiv_id=f"{arxiv_id} (chunk {idx}/{len(chunks)})",
+                    content=chunk,
+                )
+                chunk_results.append(chunk_result)
+            main_result = _synthesize_main_result_from_chunks(arxiv_id, chunk_results)
     except Exception as exc:
         return {
             "status": "failure",
@@ -114,6 +125,39 @@ def extract_main_result_tool(
         "arxiv_id": arxiv_id,
         "main_result": main_result,
     }
+
+
+def _split_text_into_chunks(text: str, chunk_size: int, overlap_ratio: float = 0.15) -> List[str]:
+    """Split text into overlapping chunks to preserve context across boundaries."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    overlap = int(chunk_size * overlap_ratio)
+    overlap = max(0, min(overlap, chunk_size - 1))
+    step = chunk_size - overlap
+
+    chunks: List[str] = []
+    start = 0
+    text_len = len(text)
+    while start < text_len:
+        end = min(start + chunk_size, text_len)
+        chunks.append(text[start:end])
+        if end >= text_len:
+            break
+        start += step
+    return chunks
+
+
+def _synthesize_main_result_from_chunks(arxiv_id: str, chunk_results: List[str]) -> str:
+    """Combine per-chunk summaries into one final main-result summary."""
+    if not chunk_results:
+        raise ValueError("No chunk results to synthesize")
+    combined = "\n\n".join(
+        f"Chunk {idx} summary:\n{result}" for idx, result in enumerate(chunk_results, start=1)
+    )
+    return _extract_main_result_with_llm(
+        arxiv_id=f"{arxiv_id} (final synthesis)",
+        content=combined,
+    )
 
 
 def _extract_main_result_with_llm(arxiv_id: str, content: str) -> str:
