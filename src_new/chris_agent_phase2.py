@@ -27,7 +27,16 @@ from src_new.topic_finder import compute_topics
 CHRIS_CATEGORIES_PHASE2 = ("math.PR", "math.ST")
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_PDF_OUTPUT_DIR = Path("data/pdfs")
-
+EXPECTED_FORMAT_OUTPUT_RULE = """
+    For every topic, the expected output structure is:
+    ##<TOPIC TITLE>##: <topic description>
+    **Reprensative papers**
+    1. <paper title>, <paper arxiv_id>
+    <reprensative paper main results>
+    2. <paper title>, <paper arxiv_id>
+    <reprensative paper main results>
+    Repeat as many times as there are representative papers
+"""
 
 @function_tool(name_override="find_topic_tool")
 def find_topic_tool(
@@ -68,6 +77,7 @@ def find_topic_tool(
 @function_tool(name_override="extract_main_result_tool")
 def extract_main_result_tool(
     arxiv_id: str,
+    title: str,
     max_chars: int = 12000,
 ) -> Dict[str, Any]:
     """Download a paper content from ArXiv and explain its main results."""
@@ -92,37 +102,41 @@ def extract_main_result_tool(
     if not content:
         return {
             "status": "failure",
-            "reason": f"No content extracted for paper {arxiv_id}.",
+            "reason": f"No content extracted for paper {arxiv_id}, with title {title}.",
             "arxiv_id": arxiv_id,
+            "title": title,
             "main_result": None,
         }
 
     try:
         effective_max_chars = max(1000, max_chars)
         if len(content) <= effective_max_chars:
-            main_result = _extract_main_result_with_llm(arxiv_id=arxiv_id, content=content)
+            main_result = _extract_main_result_with_llm(arxiv_id=arxiv_id, title=title, content=content)
         else:
             chunks = _split_text_into_chunks(content, effective_max_chars)
             chunk_results: List[str] = []
             for idx, chunk in enumerate(chunks, start=1):
                 chunk_result = _extract_main_result_with_llm(
                     arxiv_id=f"{arxiv_id} (chunk {idx}/{len(chunks)})",
+                    title=f"{title} (chunk {idx}/{len(chunks)})",
                     content=chunk,
                 )
                 chunk_results.append(chunk_result)
-            main_result = _synthesize_main_result_from_chunks(arxiv_id, chunk_results)
+            main_result = _synthesize_main_result_from_chunks(arxiv_id, title, chunk_results)
     except Exception as exc:
         return {
             "status": "failure",
             "reason": f"Main-result extraction failed for {arxiv_id}: {exc}",
             "arxiv_id": arxiv_id,
+            "title": title,
             "main_result": None,
         }
 
     return {
         "status": "success",
-        "reason": f"Extracted main result for paper {arxiv_id}.",
+        "reason": f"Extracted main result for paper {arxiv_id}, with title {title}.",
         "arxiv_id": arxiv_id,
+        "title": title,
         "main_result": main_result,
     }
 
@@ -147,7 +161,7 @@ def _split_text_into_chunks(text: str, chunk_size: int, overlap_ratio: float = 0
     return chunks
 
 
-def _synthesize_main_result_from_chunks(arxiv_id: str, chunk_results: List[str]) -> str:
+def _synthesize_main_result_from_chunks(arxiv_id: str, title: str, chunk_results: List[str]) -> str:
     """Combine per-chunk summaries into one final main-result summary."""
     if not chunk_results:
         raise ValueError("No chunk results to synthesize")
@@ -156,16 +170,18 @@ def _synthesize_main_result_from_chunks(arxiv_id: str, chunk_results: List[str])
     )
     return _extract_main_result_with_llm(
         arxiv_id=f"{arxiv_id} (final synthesis)",
+        title=f"{title} (final synthesis)",
         content=combined,
     )
 
 
-def _extract_main_result_with_llm(arxiv_id: str, content: str) -> str:
+def _extract_main_result_with_llm(arxiv_id: str, title: str, content: str) -> str:
     """Use the configured OpenAI model to summarize the paper's core contribution."""
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     prompt = (
         f"Paper ID: {arxiv_id}\n"
+        f"Paper title: {title}\n"
         "You are a probability/statistics expert.\n"
         "From the paper content below, extract the main theorem or main result, then explain it in 1-3 concise bullet points its importance.\n"
         "Explain why. Be precise and avoid speculation.\n\n"
@@ -189,6 +205,7 @@ def build_chris_agent_phase2() -> Agent:
             "If data does not exist, call `arxiv_fetcher_tool`.\n"
             "Use `find_topic_tool` only after papers were fetched and a CSV path is available.\n"
             "Use `extract_main_result_tool` when full-paper main results are requested, passing arxiv_id."
+            f"Your answer **must** follow the output structure RULE: {EXPECTED_FORMAT_OUTPUT_RULE}"
         ),
         tools=[
             check_paper_tool,

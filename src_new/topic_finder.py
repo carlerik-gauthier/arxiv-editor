@@ -109,7 +109,7 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
              .cumcount() + 1
     paper_topic_df = deepcopy(paper_topic_df[paper_topic_df.rk<=n_papers_per_topic]).reset_index(drop=True)
     representative_papers = paper_topic_df[["topic", "arxiv_id"]].groupby(by="topic")['arxiv_id'].apply(list).reset_index()
-
+    representative_papers_title = paper_topic_df[["topic", "title"]].groupby(by="topic")['title'].apply(list).reset_index()
     # combine all infos to return a list of dictionaries. The list length is equal to n_topics and 
     # dictionaries are like
     # {
@@ -119,10 +119,11 @@ def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
     #     "representative_papers": <a list of length n_papers_per_topic of Paper object>
     # }
     final_df = topic_info.merge(representative_papers, on="topic", how="inner")
+    final_df = deepcopy(final_df).merge(representative_papers_title, on="topic", how="inner")
     final_df["topic_description"] = final_df["topic_summary_"].apply(lambda arr: arr[0])
     final_df["topic_title"] = final_df["topic_title_"].apply(lambda arr: arr[0])
     #return final_df, paper_topic_df, representative_papers
-    final_df = deepcopy(final_df[["topic_title", "Count", "topic_description", "arxiv_id"]]).rename(
-        columns={"Count": "nb_papers", "arxiv_id": "representative_papers_arxiv_id"})
+    final_df = deepcopy(final_df[["topic_title", "Count", "topic_description", "arxiv_id", "title"]]).rename(
+        columns={"Count": "nb_papers", "arxiv_id": "representative_papers_arxiv_id", "title": "representative_papers_title"})
     
     return final_df.to_dict("records")

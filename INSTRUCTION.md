@@ -22,7 +22,7 @@
     - It is used whenever there is no Paper from Probability Theory in the date ranges requested by the user
     - If the number of fecthed paper is less than a predined threshold, then returns nothing and explain why 
     - Depending on the request, `ChrisAgent` fetches paper from a subset of available ArXiv or to all 
-## Phase 2: Provide new tools to ChrisAgent
+## Phase 2: Provide new tools to ChrisAgent ✅
 - Add a second tool to `ChrisAgent`: find_topic_tools
     - Use it whenever you need to extract topics from an already fetched list of Papers. As input, you need a csv location where the papers' metadata are stored.
 - Add a third tool to `ChrisAgent`: extract_main_result_tool
@@ -48,7 +48,7 @@
     - provide_intuition_tool: use it when examples and intuition are requested to explain a concept
     - metaphor_tool: use it to provide metaphors that are easier to understand when explaining concepts
 - Add `MichelAgent` as a tool from `JuliusAgent`
-    - `JuliusAgent` calls `MichelAgent` when vulgarization is needed. 
+    - `JuliusAgent` calls `MichelAgent` when vulgarization is needed. `JuliusAgent` calls `MichelAgent` as long as the result is not satisfactory  
 ## Phase 6: Create the other specialized agents
 - Create the following remaining specialized agent
     - `AlainAgent` (in honor of Alain Valette) is a mathematician agent specialized in Algebra (math.AG, math.RA, math.GR). He communicates with passion
@@ -76,3 +76,7 @@
 
 
 get topics of papers from 2026-05-19 to 2026-05-21
+
+get topics of papers from 2026-05-19 to 2026-05-21 and explain the main results for the representative papers
+
+provide the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, get one representative paper and describe the main results. 
