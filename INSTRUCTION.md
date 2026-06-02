@@ -27,13 +27,13 @@
     - Use it whenever you need to extract topics from an already fetched list of Papers. As input, you need a csv location where the papers' metadata are stored.
 - Add a third tool to `ChrisAgent`: extract_main_result_tool
     - Use it whenever you need to access the entire paper content to find and explain the main results. You must download it from Arxiv and use arxiv_id to 
-## Phase 3: Finalize ChrisAgent
+## Phase 3: Finalize ChrisAgent ✅
 - combine chris_agent_phase1 and chris_agent_phase2 into a unique file chris_agent.py. You are not allowed to import from chris_agent_phase1 or chris_agent_phase2. You must combine them
 
 ## Phase 4: Agent Julius creation
 - Create an Agent called `JuliusAgent` (in honor of Julius Springer), founder of the Springer book edition.
-    - System prompt: Editor and coordinator role, responsible for planning, delegation and generating the one-pager. The one-pager must meet the user request, including tone. The one-pager must be engaging. You can use emojis to make it appealing. You must remain professional. Unless stated otherwise by the user, the one-pager is aimed for a LinkedIn post.
-    - Has `ChrisAgent` as a tool. Call it whenever you need content related to Probability or Statistic queries. For other domains, reply politely you don't have access to it
+    - System prompt: Editor and coordinator role, responsible for planning, delegation and generating the one-pager. The one-pager must meet the user request, including tone. The one-pager must be engaging. You can use emojis or speech elevator techniaues to make it appealing. You must remain professional. Unless stated otherwise by the user, the one-pager is aimed for a LinkedIn post. The post must contains between 1 and 5 topics.
+    - Has `ChrisAgent` as a tool. Call it whenever you need content related to Probability or Statistic queries. For other domains, reply politely you don't have knowledge about it
 - `JuliusAgent` determines how many topics he need from `ChrisAgent`.
 - `JulisAgent` owns the editorial workflow and interacts with the user and is responsible for the Conversation flow:
     - Parse user request (date range, topics, preferences)
@@ -48,7 +48,7 @@
     - provide_intuition_tool: use it when examples and intuition are requested to explain a concept
     - metaphor_tool: use it to provide metaphors that are easier to understand when explaining concepts
 - Add `MichelAgent` as a tool from `JuliusAgent`
-    - `JuliusAgent` calls `MichelAgent` when vulgarization is needed. `JuliusAgent` calls `MichelAgent` as long as the result is not satisfactory  
+    - `JuliusAgent` calls `MichelAgent` when vulgarization is needed for a general audience. `JuliusAgent` calls `MichelAgent` as long as the result is not satisfactory  
 ## Phase 6: Create the other specialized agents
 - Create the following remaining specialized agent
     - `AlainAgent` (in honor of Alain Valette) is a mathematician agent specialized in Algebra (math.AG, math.RA, math.GR). He communicates with passion
@@ -65,6 +65,7 @@
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
 - All those agents have the same tools as `ChrisAgent`. The difference lies in their expertise fields
 - Add those agents as tools for `JuliusAgent`
+- Update `JuliusAgent` system prompt by adding "You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent"
 ## Phase 7: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
 - The code must be easy to maintain for future development
