@@ -19,7 +19,7 @@ from src_new.topic_finder import compute_topics
 
 
 CHRIS_SYSTEM_PROMPT = (
-    "Probability theory expert, focuses on stochastic processes. "
+    "Probability/statistics theory expert, focuses on stochastic processes. "
     "You identify key concepts and see application in other fields, such as physics"
 )
 CHRIS_CATEGORIES = ("math.PR", "math.ST")
@@ -31,13 +31,16 @@ DEFAULT_MAX_TOPICS = 5
 DEFAULT_PDF_OUTPUT_DIR = Path("data/pdfs")
 EXPECTED_FORMAT_OUTPUT_RULE = """
     For every topic, the expected output structure is:
-    **<TOPIC TITLE>**: <topic description>
-    **Reprensative papers**
-    1. <paper title>, <paper arxiv_id>
-    <reprensative paper main results>
-    2. <paper title>, <paper arxiv_id>
-    <reprensative paper main results>
-    Repeat as many times as there are representative papers
+        # <TOPIC TITLE>: 
+        <topic description>
+        **Reprensative papers**
+        1. <paper title>, <paper arxiv_id>
+        <reprensative paper main results>
+        2. <paper title>, <paper arxiv_id>
+        <reprensative paper main results>
+    Repeat as many times as there are representative papers.
+    Mandatory elements are <TOPIC TITLE>, <topic description>, <paper title> and <paper arxiv_id>
+    They must be returned regardless of user request
 """
 
 @function_tool(name_override="check_paper_tool")
@@ -181,7 +184,7 @@ def find_topic_tool(
 @function_tool(name_override="extract_main_result_tool")
 def extract_main_result_tool(
     arxiv_id: str,
-    title: str,
+    title: str = "",
     max_chars: int = 12000,
 ) -> Dict[str, Any]:
     """Download a paper content from ArXiv and explain its main results."""
@@ -245,6 +248,15 @@ def extract_main_result_tool(
     }
 
 
+@function_tool(name_override="get_arxiv_categories_tool")
+def get_arxiv_categories_tool(message: str) -> Dict[str, Any]:
+    """Tool wrapper for arXiv category inference."""
+    return {
+        "categories": _get_arxiv_categories(message),
+    }
+
+
+
 def build_chris_agent() -> Agent:
     """Create ChrisAgent for Phase 1."""
     return Agent(
@@ -252,13 +264,15 @@ def build_chris_agent() -> Agent:
         instructions=(
             f"{CHRIS_SYSTEM_PROMPT}\n"
             f"Allowed categories only: {', '.join(CHRIS_CATEGORIES)}.\n"
+            "Use `get_arxiv_categories_tool` when category inference is needed.\n"
             "Use `check_paper_tool` to verify whether CSV data already exists for the requested date range.\n"
-            "If data does not exist, call `arxiv_fetcher_tool`.\n"
+            "Use `arxiv_fetcher_tool` if data does not exist. You must only look at inferred categories. \n"
             "Use `find_topic_tool` only after papers were fetched and a CSV path is available.\n"
-            "Use `extract_main_result_tool` when full-paper main results are requested, passing arxiv_id."
+            "Use `extract_main_result_tool` when full-paper main results are requested, passing arxiv_id.\n"
             f"Your answer **must** follow the output structure RULE: {EXPECTED_FORMAT_OUTPUT_RULE}"
         ),
         tools=[
+            get_arxiv_categories_tool,
             check_paper_tool,
             arxiv_fetcher_tool,
             find_topic_tool,
@@ -270,10 +284,7 @@ def build_chris_agent() -> Agent:
 
 def run_chris_agent(message: str) -> Dict[str, Any]:
     """Run one ChrisAgent turn with SDK tracing enabled."""
-    start_date, end_date = _extract_date_range(message) 
-    # end_date = datetime.now().date().isoformat()
-    # start_date = (datetime.now()-timedelta(days=6)).date().isoformat()
-    # categories = CHRIS_CATEGORIES # 
+    start_date, end_date = _extract_date_range(message)
     categories = _get_arxiv_categories(message)
     enriched_message = (
         f"{message}\n\n"
@@ -298,7 +309,7 @@ def run_chris_agent(message: str) -> Dict[str, Any]:
         "reply": str(getattr(result, "final_output", "")),
         "tool_parameters": _extract_tool_parameters(getattr(result, "new_items", [])),
     }
-    # return str(getattr("result_final", ""))
+
 
 def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:
     """Extract function-tool call arguments from SDK run items."""
@@ -370,33 +381,25 @@ def _extract_date_range_with_llm(message: str) -> Dict[str, Optional[str]]:
         input=prompt,
         temperature=0.05,
     )
-    # content = (response.output_text or "{}").strip()
-    # payload = json.loads(content)
-
-    content = response.output_text # choices[0].message.content
-    print(content)
-
-    if not content or not content.strip():
+    content = (response.output_text or "").strip()
+    if not content:
         return {
-        "start_date": None,
-        "end_date": None
+            "start_date": None,
+            "end_date": None,
         }
-
-    content = content.strip()
 
     try:
         payload = json.loads(content)
     except json.JSONDecodeError:
         return {
-        "start_date": None,
-        "end_date": None
+            "start_date": None,
+            "end_date": None,
         }
-    print(f"start_date: {payload.get("start_date")}; end_date: {payload.get("end_date")}" )
+
     return {
         "start_date": payload.get("start_date"),
         "end_date": payload.get("end_date"),
     }
-
 
 def _classify_categories_with_llm(message: str) -> List[str]:
     """Use an LLM to classify the requested ChrisAgent categories."""
@@ -441,10 +444,10 @@ def _get_arxiv_categories(message: str) -> List[str]:
     except Exception:
         raw_categories = []
 
-    normalized = {category for category in raw_categories if category in CHRIS_CATEGORIES}
+    normalized = [category for category in CHRIS_CATEGORIES if category in raw_categories]
     if not normalized:
         return list(CHRIS_CATEGORIES)
-    return list(normalized)
+    return normalized
 
 def _save_papers_to_csv(papers: List[Paper], output_path: Path) -> None:
     """Save fetched papers as CSV rows."""

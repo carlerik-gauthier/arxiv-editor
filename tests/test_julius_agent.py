@@ -26,6 +26,43 @@ def test_is_probability_or_statistics_request_rejects_unsupported_queries():
     )
 
 
+def test_is_probability_or_statistics_request_uses_llm_fallback(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        output_text = "YES"
+
+    class FakeResponses:
+        def create(self, model, input, temperature):
+            captured["model"] = model
+            captured["input"] = input
+            captured["temperature"] = temperature
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+            self.responses = FakeResponses()
+
+    def fake_getenv(key, default=None):
+        values = {
+            "OPENAI_API_KEY": "test-api-key",
+            "OPENAI_MODEL": "test-model",
+        }
+        return values.get(key, default)
+
+    monkeypatch.setattr(phase4, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(phase4.os, "getenv", fake_getenv)
+
+    assert phase4._is_probability_or_statistics_request(
+        "Discuss the hidden structure of the urn experiment."
+    )
+    assert captured["api_key"] == "test-api-key"
+    assert captured["model"] == "test-model"
+    assert captured["temperature"] == 0
+    assert "YES or NO" in str(captured["input"])
+
+
 def test_infer_requested_topic_count_reads_digits():
     assert phase4._infer_requested_topic_count("Give me 9 topics.") == 5
 
@@ -35,10 +72,49 @@ def test_infer_requested_topic_count_reads_words_from_history():
     assert phase4._infer_requested_topic_count("Use the same scope.", history=history) == 2
 
 
+def test_extract_date_range_tool_wraps_helper(monkeypatch):
+    monkeypatch.setattr(phase4, "_extract_date_range", lambda _message: ("2026-01-01", "2026-01-31"))
+
+    wrapped = phase4.extract_date_range_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
+    result = wrapped("any message")
+
+    assert result == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
+
+
 def test_run_julius_agent_declines_out_of_scope_request():
     result = phase4.run_julius_agent("Cover recent algebra papers.")
     assert "only coordinate probability or statistics" in result["reply"]
     assert result["tool_parameters"] == []
+
+
+def test_run_julius_agent_traces_out_of_scope_request(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeTrace:
+        def __enter__(self):
+            captured["entered"] = True
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            captured["exited"] = True
+
+    def fake_trace(name, metadata=None, disabled=False, **_kwargs):
+        captured["name"] = name
+        captured["metadata"] = metadata
+        captured["disabled"] = disabled
+        return FakeTrace()
+
+    monkeypatch.setattr(phase4, "trace", fake_trace)
+    monkeypatch.setattr(phase4, "_is_probability_or_statistics_request", lambda _text: False)
+
+    result = phase4.run_julius_agent("Cover recent algebra papers.")
+
+    assert "only coordinate probability or statistics" in result["reply"]
+    assert result["tool_parameters"] == []
+    assert captured["entered"] is True
+    assert captured["exited"] is True
+    assert captured["name"] == "phase4-julius-agent-run"
+    assert captured["metadata"] == {"agent": "JuliusAgent", "has_history": False}
 
 
 def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
@@ -65,6 +141,8 @@ def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
     monkeypatch.setattr(phase4, "build_julius_agent", lambda: type("A", (), {"name": "JuliusAgent"})())
     monkeypatch.setattr(phase4.Runner, "run_sync", fake_runner)
     monkeypatch.setattr(phase4, "trace", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(phase4, "_extract_date_range", lambda _message: ("2026-05-19", "2026-05-21"))
+    monkeypatch.setattr(phase4, "_get_arxiv_categories", lambda _message: ["math.PR", "math.ST"])
 
     result = phase4.run_julius_agent(
         "Give me two topics on Markov chains.",
@@ -81,4 +159,6 @@ def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
     assert captured["agent_name"] == "JuliusAgent"
     assert captured["max_turns"] == phase4.DEFAULT_MAX_TURNS
     assert "2026-05-19 to 2026-05-21" in str(captured["input"])
+    assert "Requested date range hint: start_date=2026-05-19, end_date=2026-05-21." in str(captured["input"])
+    assert "Requested arXiv categories hint: math.PR, math.ST." in str(captured["input"])
     assert "Requested topic count hint: 2." in str(captured["input"])

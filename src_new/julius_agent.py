@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timedelta
+from openai import OpenAI
 from typing import Any, Dict, Iterable, List, Optional
 
-from agents import Agent, Runner, trace
+from agents import Agent, Runner, function_tool, trace
 
 from src_new.chris_agent import build_chris_agent
 
@@ -17,7 +19,7 @@ JULIUS_SYSTEM_PROMPT = (
     "The one-pager must meet the user request, including tone. "
     "The one-pager must be engaging. You can use emojis or speech elevator techniques to make it appealing. "
     "You must remain professional. Unless stated otherwise by the user, the one-pager is aimed for a LinkedIn post. "
-    "The post must contain between 1 and 5 topics.\n"
+    "The post must contain between 1 and 5 topics. By default, unless stated otherwise, assume 3 topics.\n\n"
     "You own the editorial workflow:\n"
     "- Parse the user request, including date range, topics, and preferences.\n"
     "- Create a concise execution plan before writing the final one-pager.\n"
@@ -26,11 +28,12 @@ JULIUS_SYSTEM_PROMPT = (
     "- When you call ChrisAgent, make the request self-contained and include the date range, topic count, "
     "audience, tone, and whether main results are required.\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
-    "- Synthesize the delegated material into one coherent one-pager.\n"
+    "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
     "- If the request is outside probability/statistics, reply politely that you do not have knowledge about it.\n"
 )
 
 DEFAULT_MAX_TOPICS = 5
+DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 8
 
@@ -42,7 +45,7 @@ _NUMBER_WORDS = {
     "five": 5,
 }
 
-_SUPPORTED_KEYWORDS = (
+_SUPPORTED_PR_ST_KEYWORDS = (
     "probability",
     "probabilistic",
     "statistics",
@@ -68,18 +71,26 @@ _SUPPORTED_KEYWORDS = (
 
 def build_julius_agent() -> Agent:
     """Create JuliusAgent for phase 4."""
+    # TODO: update by providing more information in tool_description and extend instructions (see how it was done for ChrisAgent) 
+    # See actual _build_editorial_prompt
+
+    # "If the user did not specify an audience, assume LinkedIn.\n"
+    # "Always restate the execution plan briefly before the final one-pager.\n"
+    # "When delegating to ChrisAgent, include the date range, inferred categories, topic count, "
+    # "audience, tone, and whether main results are required.\n"
+    
     chris_tool = build_chris_agent().as_tool(
         tool_name="chris_agent_tool",
         tool_description=(
             "Probability/statistics specialist. Use it for math.PR and math.ST requests, "
-            "topic extraction, and representative-paper main results."
+            "topic extraction and description, and representative-paper main results."
         ),
         max_turns=6,
     )
     return Agent(
         name="JuliusAgent",
         instructions=JULIUS_SYSTEM_PROMPT,
-        tools=[chris_tool],
+        tools=[extract_date_range_tool, chris_tool],
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
     )
 
@@ -90,33 +101,34 @@ def run_julius_agent(
 ) -> Dict[str, Any]:
     """Run one JuliusAgent turn with SDK tracing enabled."""
     history = list(conversation_history or [])
-    combined_context = _conversation_context(history, message)
-    if not _is_probability_or_statistics_request(combined_context):
-        return {
-            "reply": (
-                "I can only coordinate probability or statistics requests for now. "
-                "Please reformulate the request around those domains."
-            ),
-            "tool_parameters": [],
-        }
-
-    topic_count = _infer_requested_topic_count(message, history=history)
-    enriched_message = _build_editorial_prompt(
-        message=message,
-        conversation_history=history,
-        topic_count=topic_count,
-    )
-    agent = build_julius_agent()
-
     with trace(
         "phase4-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
-            "requested_topic_count": topic_count,
             "has_history": bool(history),
         },
         disabled=os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "0") == "1",
     ):
+        combined_context = _conversation_context(history, message)
+        if not _is_probability_or_statistics_request(combined_context):
+            return {
+                "reply": (
+                    "I can only coordinate probability or statistics requests for now. "
+                    "Please reformulate the request around those domains."
+                ),
+                "tool_parameters": [],
+            }
+
+        start_date, end_date = _extract_date_range(combined_context)
+        topic_count = _infer_requested_topic_count(message, history=history)
+        enriched_message = _build_editorial_prompt(
+            message=message,
+            conversation_history=history,
+            start_date=start_date,
+            end_date=end_date,
+            topic_count=topic_count,
+        )
+        agent = build_julius_agent()
         result = Runner.run_sync(agent, enriched_message, max_turns=DEFAULT_MAX_TURNS)
 
     return {
@@ -128,10 +140,15 @@ def run_julius_agent(
 def _build_editorial_prompt(
     message: str,
     conversation_history: List[Dict[str, str]],
+    start_date: str,
+    end_date: str,
     topic_count: Optional[int],
 ) -> str:
+    # TODO: update the output prompt: it should only contains user message and updates. See ChrisAgent
+    # transform it as a tool
     """Build a self-contained JuliusAgent input with session context."""
     history_text = _serialize_conversation(conversation_history)
+    date_line = f"Requested date range hint: start_date={start_date}, end_date={end_date}."
     topic_line = (
         f"Requested topic count hint: {topic_count}."
         if topic_count is not None
@@ -139,9 +156,12 @@ def _build_editorial_prompt(
     )
     return (
         "You are handling the phase 4 editorial workflow.\n"
+        f"{date_line}\n"
         f"{topic_line}\n"
         "If the user did not specify an audience, assume LinkedIn.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
+        "When delegating to ChrisAgent, include the date range, inferred categories, topic count, "
+        "audience, tone, and whether main results are required.\n"
         f"Conversation history:\n{history_text}\n\n"
         f"Latest user request:\n{message}"
     )
@@ -173,7 +193,36 @@ def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> s
 def _is_probability_or_statistics_request(text: str) -> bool:
     """Return True when the request stays within JuliusAgent's current scope."""
     normalized = text.casefold()
-    return any(keyword in normalized for keyword in _SUPPORTED_KEYWORDS)
+    if any(keyword in normalized for keyword in _SUPPORTED_PR_ST_KEYWORDS):
+        return True
+    return _is_probability_or_statistics_request_with_llm(text)
+
+
+def _is_probability_or_statistics_request_with_llm(text: str) -> bool:
+    """Use a tiny LLM fallback when the keyword check is inconclusive."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return False
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    prompt = (
+        "Decide whether the user text is about probability or statistics, including "
+        "implicit or closely related requests.\n"
+        "Return exactly YES or NO.\n"
+        f"Text: {text}"
+    )
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            temperature=0,
+        )
+    except Exception:
+        return False
+
+    content = (response.output_text or "").strip().casefold()
+    return content == "yes"
 
 
 def _infer_requested_topic_count(
@@ -203,6 +252,84 @@ def _extract_topic_count_from_text(text: str) -> Optional[int]:
         if re.search(rf"\b{word}\s+(?:main\s+)?topics?\b", lowered):
             return value
     return None
+
+
+@function_tool(name_override="extract_date_range_tool")
+def extract_date_range_tool(message: str) -> Dict[str, Any]:
+    """Tool wrapper that extracts an ISO date range from the user message."""
+    start_date, end_date = _extract_date_range(message)
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
+def _extract_date_range(message: str) -> tuple[str, str]:
+    extracted = _extract_date_range_with_llm(message)
+    if extracted:
+        start_raw = extracted.get("start_date")
+        end_raw = extracted.get("end_date")
+        try:
+            start = _parse_iso_date(str(start_raw))
+            end = _parse_iso_date(str(end_raw)) if end_raw else datetime.now()
+        except (ValueError, TypeError):
+            pass
+        else:
+            if start > end:
+                start, end = end, start
+            return start.date().isoformat(), end.date().isoformat()
+    end = datetime.now()
+    start = end - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+    return start.date().isoformat(), end.date().isoformat()
+
+
+def _parse_iso_date(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid date '{value}'. Use YYYY-MM-DD.") from exc
+
+def _extract_date_range_with_llm(message: str) -> Dict[str, Optional[str]]:
+    """Use an LLM to extract ISO date bounds from a user message."""
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    today = datetime.now().date()
+    day_name = today.strftime("%A")
+    month_name = today.strftime("%B")
+    prompt = (
+        "Extract an explicit date range from the user message.\n"
+        "Return JSON only with this exact schema: "
+        "{\"start_date\":\"YYYY-MM-DD or null\",\"end_date\":\"YYYY-MM-DD or null\"}.\n"
+        f"Today is {day_name}, {month_name} {today.day}, {today.year}.\n"
+        "Rule:\n"
+        f"- if there is a relative date, then end_date is {today.isoformat()}\n"
+        "- if there is not any date intent in the message, then return null for start_date and end_date\n"
+        f"User message: {message}"
+    )
+    response = client.responses.create(
+        model=model,
+        input=prompt,
+        temperature=0,
+    )
+    content = (response.output_text or "").strip()
+    if not content:
+        return {
+            "start_date": None,
+            "end_date": None,
+        }
+
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return {
+            "start_date": None,
+            "end_date": None,
+        }
+
+    return {
+        "start_date": payload.get("start_date"),
+        "end_date": payload.get("end_date"),
+    }
 
 
 def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:

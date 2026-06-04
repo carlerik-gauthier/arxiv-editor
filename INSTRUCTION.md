@@ -81,3 +81,5 @@ get topics of papers from 2026-05-19 to 2026-05-21
 get topics of papers from 2026-05-19 to 2026-05-21 and explain the main results for the representative papers
 
 provide the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, get one representative paper and describe the main results. 
+
+I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described.

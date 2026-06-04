@@ -248,7 +248,7 @@ def test_extract_main_result_tool_success(monkeypatch):
             return "Main theorem content"
 
     monkeypatch.setattr(phase3, "ArxivFetcher", FakeFetcher)
-    monkeypatch.setattr(phase3, "_extract_main_result_with_llm", lambda arxiv_id, content: "- result")
+    monkeypatch.setattr(phase3, "_extract_main_result_with_llm", lambda arxiv_id, title, content: "- result")
 
     result = _wrapped_extract_main_result_tool()(arxiv_id="2601.12345")
     assert result["status"] == "success"
