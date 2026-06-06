@@ -53,6 +53,16 @@
 - Create the following remaining specialized agent
     - `AlainAgent` (in honor of Alain Valette) is a mathematician agent specialized in Algebra (math.AG, math.RA, math.GR). He communicates with passion
         - System prompt: Algebraic structures specialist
+    - `AlainAgent` has the same tools as `ChrisAgent`. The difference lies in their expertise fields
+- Add those agents as tools for `JuliusAgent`
+- Update `JuliusAgent` system prompt by adding "You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent"
+## Phase 7: Review, Refactor, Unit test
+- Review the code by removing useless line of codes.
+- The code must be easy to maintain for future development
+- Refactor the code whereever it is needed to prevent code duplication
+- generate the unit tests
+## Phase 8 : Add the remaining specialized agetns
+- Create the following remaining specialized agent
     - `BrunoAgent` is a mathematician agent specialized in Spectral/Riemannian Geometry (math.DG, math.SP). He is extremely rigorous when communicating.
         - System prompt: Geometry expert, emphasizes geometric intuition
     - `ElisaAgent` is a mathematician agent specialized in Applied math/Cryptography (cs.CR, math.OC). She is dynamic and is result-oriented in her communication
@@ -63,10 +73,7 @@
         - System prompt: ML researcher, explains algorithms and applications
     - `JeanBaptisteAgent` is a Data Scientist agent specialized in Data Science/NLP/LLM/Agentic AI (cs.CL, cs.AI, cs.MA, cs.CE). He is very experience in deploying model in production and has a concise communication style
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
-- All those agents have the same tools as `ChrisAgent`. The difference lies in their expertise fields
-- Add those agents as tools for `JuliusAgent`
-- Update `JuliusAgent` system prompt by adding "You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent"
-## Phase 7: Review, Refactor, Unit test and Document
+## Phase 9: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
 - The code must be easy to maintain for future development
 - Refactor the code whereever it is needed to prevent code duplication
@@ -75,11 +82,9 @@
 - Provide a documentation about the workflow and add a schema about the agentic system
 
 
-
 get topics of papers from 2026-05-19 to 2026-05-21
-
 get topics of papers from 2026-05-19 to 2026-05-21 and explain the main results for the representative papers
-
 provide the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, get one representative paper and describe the main results. 
+
 
 I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described.

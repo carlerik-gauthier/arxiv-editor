@@ -26,7 +26,7 @@ JULIUS_SYSTEM_PROMPT = (
     "- Determine how many topics are needed from ChrisAgent.\n"
     "- Delegate probability/statistics content requests to ChrisAgent.\n"
     "- When you call ChrisAgent, make the request self-contained and include the date range, topic count, "
-    "audience, tone, and whether main results are required.\n"
+    "  and whether main results are required.\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
     "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
     "- If the request is outside probability/statistics, reply politely that you do not have knowledge about it.\n"
@@ -48,6 +48,7 @@ _NUMBER_WORDS = {
 _SUPPORTED_PR_ST_KEYWORDS = (
     "probability",
     "probabilistic",
+    "probabilities",
     "statistics",
     "statistical",
     "stochastic",
@@ -71,26 +72,30 @@ _SUPPORTED_PR_ST_KEYWORDS = (
 
 def build_julius_agent() -> Agent:
     """Create JuliusAgent for phase 4."""
-    # TODO: update by providing more information in tool_description and extend instructions (see how it was done for ChrisAgent) 
-    # See actual _build_editorial_prompt
-
-    # "If the user did not specify an audience, assume LinkedIn.\n"
-    # "Always restate the execution plan briefly before the final one-pager.\n"
-    # "When delegating to ChrisAgent, include the date range, inferred categories, topic count, "
-    # "audience, tone, and whether main results are required.\n"
-    
     chris_tool = build_chris_agent().as_tool(
         tool_name="chris_agent_tool",
         tool_description=(
-            "Probability/statistics specialist. Use it for math.PR and math.ST requests, "
+            "Probability/statistics specialist. Use it for requests related to probability and statistics, "
             "topic extraction and description, and representative-paper main results."
         ),
         max_turns=6,
     )
+    instructions = (
+        f"{JULIUS_SYSTEM_PROMPT}\n"
+        "Use `extract_date_range_tool` to find the date range requested by the user.\n"
+        "Use `chris_agent_tool` to delegate probability/statistics work and collect topic titles, descriptions, "
+        "representative papers, and main results when needed.\n"
+        "Use `editorial_one_pager_tool` to turn the specialist output into the final one-pager.\n"
+        "If the user did not specify an audience, assume LinkedIn.\n"
+        "Always restate the execution plan briefly before the final one-pager.\n"
+        "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
+        "and whether main results are required.\n"
+    )
+
     return Agent(
         name="JuliusAgent",
-        instructions=JULIUS_SYSTEM_PROMPT,
-        tools=[extract_date_range_tool, chris_tool],
+        instructions=instructions,
+        tools=[extract_date_range_tool, chris_tool, editorial_one_pager_tool],
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
     )
 
@@ -119,53 +124,13 @@ def run_julius_agent(
                 "tool_parameters": [],
             }
 
-        start_date, end_date = _extract_date_range(combined_context)
-        topic_count = _infer_requested_topic_count(message, history=history)
-        enriched_message = _build_editorial_prompt(
-            message=message,
-            conversation_history=history,
-            start_date=start_date,
-            end_date=end_date,
-            topic_count=topic_count,
-        )
         agent = build_julius_agent()
-        result = Runner.run_sync(agent, enriched_message, max_turns=DEFAULT_MAX_TURNS)
+        result = Runner.run_sync(agent, message, max_turns=DEFAULT_MAX_TURNS)
 
     return {
         "reply": str(getattr(result, "final_output", "")),
         "tool_parameters": _extract_tool_parameters(getattr(result, "new_items", [])),
     }
-
-
-def _build_editorial_prompt(
-    message: str,
-    conversation_history: List[Dict[str, str]],
-    start_date: str,
-    end_date: str,
-    topic_count: Optional[int],
-) -> str:
-    # TODO: update the output prompt: it should only contains user message and updates. See ChrisAgent
-    # transform it as a tool
-    """Build a self-contained JuliusAgent input with session context."""
-    history_text = _serialize_conversation(conversation_history)
-    date_line = f"Requested date range hint: start_date={start_date}, end_date={end_date}."
-    topic_line = (
-        f"Requested topic count hint: {topic_count}."
-        if topic_count is not None
-        else "Requested topic count hint: infer it from the request and keep it between 1 and 5."
-    )
-    return (
-        "You are handling the phase 4 editorial workflow.\n"
-        f"{date_line}\n"
-        f"{topic_line}\n"
-        "If the user did not specify an audience, assume LinkedIn.\n"
-        "Always restate the execution plan briefly before the final one-pager.\n"
-        "When delegating to ChrisAgent, include the date range, inferred categories, topic count, "
-        "audience, tone, and whether main results are required.\n"
-        f"Conversation history:\n{history_text}\n\n"
-        f"Latest user request:\n{message}"
-    )
-
 
 def _conversation_context(
     conversation_history: List[Dict[str, str]],
@@ -224,34 +189,260 @@ def _is_probability_or_statistics_request_with_llm(text: str) -> bool:
     content = (response.output_text or "").strip().casefold()
     return content == "yes"
 
+@function_tool(name_override="editorial_one_pager_tool")
+def editorial_one_pager_tool(
+    specialized_agent_input: str,
+    title: str = "ArXiv Research Brief",
+    audience: str = "LinkedIn",
+    tone: str = "professional",
+) -> Dict[str, Any]:
+    """
+    Synthesize specialist outputs into a one-pager draft.
 
-def _infer_requested_topic_count(
-    message: str,
-    history: Optional[List[Dict[str, str]]] = None,
-) -> Optional[int]:
-    """Infer an explicit topic count from the latest message, then history."""
-    inferred = _extract_topic_count_from_text(message)
-    if inferred is not None:
-        return inferred
+    This tool is responsible for adapting the tone and structure to the target
+    audience and for turning specialist results into a coherent editorial brief.
+    """
+    payload = _parse_editorial_payload(specialized_agent_input)
+    audience = (payload.get("audience") or audience or "LinkedIn").strip() or "LinkedIn"
+    tone = (payload.get("tone") or tone or "professional").strip() or "professional"
+    title = (payload.get("title") or title or "ArXiv Research Brief").strip() or "ArXiv Research Brief"
 
-    for item in reversed(history or []):
-        inferred = _extract_topic_count_from_text(str(item.get("content", "")))
-        if inferred is not None:
-            return inferred
+    topics = _normalize_editorial_topics(payload)
+    if not topics:
+        return {
+            "status": "needs_topics",
+            "title": title,
+            "audience": audience,
+            "tone": tone,
+            "topic_count": 0,
+            "content": (
+                f"# {title}\n\n"
+                "No specialist topics were provided yet. Collect the delegate outputs "
+                "before drafting the one-pager."
+            ),
+        }
+
+    execution_plan = _normalize_execution_plan(payload.get("execution_plan"))
+    date_range = _normalize_date_range(payload)
+    intro = _build_editorial_intro(
+        audience=audience,
+        tone=tone,
+        topic_count=len(topics),
+        date_range=date_range,
+    )
+    content_parts = [f"# {title}", intro]
+
+    if execution_plan:
+        content_parts.append(
+            "## Execution Plan\n" + "\n".join(f"- {step}" for step in execution_plan)
+        )
+
+    for index, topic in enumerate(topics, start=1):
+        content_parts.append(_render_editorial_topic(topic, index))
+
+    return {
+        "status": "compiled",
+        "title": title,
+        "audience": audience,
+        "tone": tone,
+        "topic_count": len(topics),
+        "date_range": date_range,
+        "content": "\n\n".join(content_parts),
+    }
+
+
+def _normalize_editorial_topics(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Collect topic-like entries from specialist output."""
+    agent_results = payload.get("agent_results")
+    if isinstance(agent_results, dict):
+        collected: List[Dict[str, Any]] = []
+        for agent_name, agent_output in agent_results.items():
+            if isinstance(agent_output, dict):
+                nested_topics = _normalize_editorial_topics(agent_output)
+                if nested_topics:
+                    collected.extend(nested_topics)
+                    continue
+                collected.append({**agent_output, "source_agent": agent_name})
+        if collected:
+            return collected
+
+    raw_topics = (
+        payload.get("topic_summaries")
+        or payload.get("topics")
+        or payload.get("specialist_results")
+        or payload.get("results")
+        or []
+    )
+    if isinstance(raw_topics, dict):
+        raw_topics = [raw_topics]
+
+    normalized: List[Dict[str, Any]] = []
+    for item in raw_topics:
+        if isinstance(item, dict):
+            normalized.append(item)
+    return normalized
+
+
+def _parse_editorial_payload(specialized_agent_input: Any) -> Dict[str, Any]:
+    """Parse the tool input into a normalized payload."""
+    if isinstance(specialized_agent_input, dict):
+        return dict(specialized_agent_input)
+    if isinstance(specialized_agent_input, str):
+        text = specialized_agent_input.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"raw_input": text}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"raw_input": text}
+    return {}
+
+
+def _normalize_execution_plan(execution_plan: Any) -> List[str]:
+    """Convert a plan payload into a short list of readable steps."""
+    if not execution_plan:
+        return []
+    if isinstance(execution_plan, str):
+        return [line.strip("- ").strip() for line in execution_plan.splitlines() if line.strip()]
+    if isinstance(execution_plan, dict):
+        execution_plan = execution_plan.get("steps") or execution_plan.get("items") or []
+
+    steps: List[str] = []
+    for item in execution_plan if isinstance(execution_plan, list) else []:
+        if isinstance(item, str):
+            step = item.strip()
+        elif isinstance(item, dict):
+            step = str(item.get("step") or item.get("description") or item.get("title") or "").strip()
+        else:
+            step = str(item).strip()
+        if step:
+            steps.append(step)
+    return steps
+
+
+def _normalize_date_range(payload: Dict[str, Any]) -> Optional[str]:
+    """Extract a compact date-range summary for the editorial intro."""
+    date_range = payload.get("date_range")
+    if isinstance(date_range, dict):
+        start = str(date_range.get("start_date") or date_range.get("start") or "").strip()
+        end = str(date_range.get("end_date") or date_range.get("end") or "").strip()
+        if start and end:
+            return f"{start} to {end}"
+        if start:
+            return start
+    start = str(payload.get("start_date") or "").strip()
+    end = str(payload.get("end_date") or "").strip()
+    if start and end:
+        return f"{start} to {end}"
+    if start:
+        return start
     return None
 
 
-def _extract_topic_count_from_text(text: str) -> Optional[int]:
-    """Extract a requested topic count and clamp it to JuliusAgent's limits."""
-    lowered = text.casefold()
-    digit_match = re.search(r"\b([1-9][0-9]*)\s+(?:main\s+)?topics?\b", lowered)
-    if digit_match:
-        return max(1, min(int(digit_match.group(1)), DEFAULT_MAX_TOPICS))
+def _build_editorial_intro(
+    audience: str,
+    tone: str,
+    topic_count: int,
+    date_range: Optional[str],
+) -> str:
+    """Create the short editorial framing for the one-pager."""
+    audience_text = audience or "LinkedIn"
+    tone_text = tone or "professional"
+    range_text = f" Date range: {date_range}." if date_range else ""
+    topic_text = "topic" if topic_count == 1 else "topics"
+    return (
+        f"This one-pager is written for {audience_text} in a {tone_text} tone."
+        f" It synthesizes {topic_count} {topic_text} from the specialist handoff."
+        f"{range_text}"
+    )
 
-    for word, value in _NUMBER_WORDS.items():
-        if re.search(rf"\b{word}\s+(?:main\s+)?topics?\b", lowered):
-            return value
-    return None
+
+def _render_editorial_topic(topic: Dict[str, Any], index: int) -> str:
+    """Render one topic section from the specialist payload."""
+    title = (
+        str(
+            topic.get("title")
+            or topic.get("topic")
+            or topic.get("topic_title")
+            or f"Topic {index}"
+        ).strip()
+        or f"Topic {index}"
+    )
+    description = str(
+        topic.get("description")
+        or topic.get("topic_description")
+        or topic.get("summary")
+        or ""
+    ).strip()
+    importance = str(
+        topic.get("importance")
+        or topic.get("main_results_and_importance")
+        or topic.get("main_results")
+        or ""
+    ).strip()
+    representative_papers = topic.get("representative_papers") or topic.get("papers") or []
+
+    section_lines = [f"## {index}. {title}"]
+    if description:
+        section_lines.append(description)
+    if importance:
+        section_lines.append(f"Main results and importance: {importance}")
+    if representative_papers:
+        section_lines.append("Representative papers:")
+        for paper_index, paper in enumerate(representative_papers, start=1):
+            section_lines.append(f"{paper_index}. {_render_paper_reference(paper)}")
+    else:
+        section_lines.append("Representative papers: not provided.")
+    return "\n".join(section_lines)
+
+
+def _render_paper_reference(paper: Any) -> str:
+    """Format a representative paper reference for the one-pager."""
+    if isinstance(paper, dict):
+        title = str(paper.get("title") or paper.get("paper_title") or "Untitled paper").strip()
+        arxiv_id = str(paper.get("arxiv_id") or paper.get("id") or paper.get("paper_id") or "").strip()
+        main_result = str(paper.get("main_result") or paper.get("result") or "").strip()
+        parts = [title]
+        if arxiv_id:
+            parts.append(f"({arxiv_id})")
+        if main_result:
+            parts.append(f"- {main_result}")
+        return " ".join(parts)
+    return str(paper).strip() or "Untitled paper"
+
+
+
+
+# def _infer_requested_topic_count(
+#     message: str,
+#     history: Optional[List[Dict[str, str]]] = None,
+# ) -> Optional[int]:
+#     """Infer an explicit topic count from the latest message, then history."""
+#     inferred = _extract_topic_count_from_text(message)
+#     if inferred is not None:
+#         return inferred
+
+#     for item in reversed(history or []):
+#         inferred = _extract_topic_count_from_text(str(item.get("content", "")))
+#         if inferred is not None:
+#             return inferred
+#     return None
+
+
+# def _extract_topic_count_from_text(text: str) -> Optional[int]:
+#     """Extract a requested topic count and clamp it to JuliusAgent's limits."""
+#     lowered = text.casefold()
+#     digit_match = re.search(r"\b([1-9][0-9]*)\s+(?:main\s+)?topics?\b", lowered)
+#     if digit_match:
+#         return max(1, min(int(digit_match.group(1)), DEFAULT_MAX_TOPICS))
+
+#     for word, value in _NUMBER_WORDS.items():
+#         if re.search(rf"\b{word}\s+(?:main\s+)?topics?\b", lowered):
+#             return value
+#     return None
 
 
 @function_tool(name_override="extract_date_range_tool")

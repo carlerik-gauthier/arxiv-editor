@@ -81,6 +81,40 @@ def test_extract_date_range_tool_wraps_helper(monkeypatch):
     assert result == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
 
 
+def test_editorial_one_pager_tool_renders_specialist_topics():
+    wrapped = phase4.editorial_one_pager_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
+    result = wrapped(
+        {
+            "title": "Weekly ArXiv Brief",
+            "audience": "LinkedIn",
+            "tone": "concise",
+            "date_range": {"start_date": "2026-05-19", "end_date": "2026-05-21"},
+            "execution_plan": ["Extract the date range", "Delegate to ChrisAgent", "Draft the one-pager"],
+            "topic_summaries": [
+                {
+                    "title": "Stochastic processes",
+                    "description": "Recent papers on scaling limits and Markov dynamics.",
+                    "main_results_and_importance": "They sharpen convergence guarantees.",
+                    "representative_papers": [
+                        {
+                            "title": "A paper on Markov chains",
+                            "arxiv_id": "arXiv:2605.00001",
+                            "main_result": "Provides a new mixing-time bound.",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert result["status"] == "compiled"
+    assert result["topic_count"] == 1
+    assert "Weekly ArXiv Brief" in result["content"]
+    assert "Execution Plan" in result["content"]
+    assert "Stochastic processes" in result["content"]
+    assert "arXiv:2605.00001" in result["content"]
+
+
 def test_run_julius_agent_declines_out_of_scope_request():
     result = phase4.run_julius_agent("Cover recent algebra papers.")
     assert "only coordinate probability or statistics" in result["reply"]
@@ -141,8 +175,6 @@ def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
     monkeypatch.setattr(phase4, "build_julius_agent", lambda: type("A", (), {"name": "JuliusAgent"})())
     monkeypatch.setattr(phase4.Runner, "run_sync", fake_runner)
     monkeypatch.setattr(phase4, "trace", lambda *args, **kwargs: nullcontext())
-    monkeypatch.setattr(phase4, "_extract_date_range", lambda _message: ("2026-05-19", "2026-05-21"))
-    monkeypatch.setattr(phase4, "_get_arxiv_categories", lambda _message: ["math.PR", "math.ST"])
 
     result = phase4.run_julius_agent(
         "Give me two topics on Markov chains.",
@@ -158,7 +190,4 @@ def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
     ]
     assert captured["agent_name"] == "JuliusAgent"
     assert captured["max_turns"] == phase4.DEFAULT_MAX_TURNS
-    assert "2026-05-19 to 2026-05-21" in str(captured["input"])
-    assert "Requested date range hint: start_date=2026-05-19, end_date=2026-05-21." in str(captured["input"])
-    assert "Requested arXiv categories hint: math.PR, math.ST." in str(captured["input"])
-    assert "Requested topic count hint: 2." in str(captured["input"])
+    assert captured["input"] == "Give me two topics on Markov chains."
