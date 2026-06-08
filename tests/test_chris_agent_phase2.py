@@ -50,9 +50,13 @@ def test_extract_main_result_tool_success(monkeypatch):
             return "Main theorem content"
 
     monkeypatch.setattr(phase2, "ArxivFetcher", FakeFetcher)
-    monkeypatch.setattr(phase2, "_extract_main_result_with_llm", lambda arxiv_id, content: "- result")
+    monkeypatch.setattr(
+        phase2,
+        "_extract_main_result_with_llm",
+        lambda arxiv_id, title, content: "- result",
+    )
 
-    result = _wrapped_extract_main_result_tool()(arxiv_id="2601.12345")
+    result = _wrapped_extract_main_result_tool()(arxiv_id="2601.12345", title="A theorem")
     assert result["status"] == "success"
     assert result["main_result"] == "- result"
 
@@ -63,6 +67,6 @@ def test_extract_main_result_tool_failure_on_download(monkeypatch):
             raise RuntimeError("download failed")
 
     monkeypatch.setattr(phase2, "ArxivFetcher", FakeFetcher)
-    result = _wrapped_extract_main_result_tool()(arxiv_id="2601.12345")
+    result = _wrapped_extract_main_result_tool()(arxiv_id="2601.12345", title="A theorem")
     assert result["status"] == "failure"
     assert result["main_result"] is None

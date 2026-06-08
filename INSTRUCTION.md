@@ -29,8 +29,7 @@
     - Use it whenever you need to access the entire paper content to find and explain the main results. You must download it from Arxiv and use arxiv_id to 
 ## Phase 3: Finalize ChrisAgent ✅
 - combine chris_agent_phase1 and chris_agent_phase2 into a unique file chris_agent.py. You are not allowed to import from chris_agent_phase1 or chris_agent_phase2. You must combine them
-
-## Phase 4: Agent Julius creation
+## Phase 4: Agent Julius creation ✅
 - Create an Agent called `JuliusAgent` (in honor of Julius Springer), founder of the Springer book edition.
     - System prompt: Editor and coordinator role, responsible for planning, delegation and generating the one-pager. The one-pager must meet the user request, including tone. The one-pager must be engaging. You can use emojis or speech elevator techniaues to make it appealing. You must remain professional. Unless stated otherwise by the user, the one-pager is aimed for a LinkedIn post. The post must contains between 1 and 5 topics.
     - Has `ChrisAgent` as a tool. Call it whenever you need content related to Probability or Statistic queries. For other domains, reply politely you don't have knowledge about it
@@ -44,7 +43,7 @@
 ## Phase 5: Agent Michel Creation
 - Create an Agent called `MichelAgent` (in honor of Michel Benaim), a mathematician with outstanding skills to provide mathematical intuition on complex mathematical concepts to non-experts using examples and metaphor
 - `MichelAgent` has 3 tools:
-    - make_clearer_tool: use it when reformulation is needed ti vulgarize it
+    - make_clearer_tool: use it when reformulation is needed to vulgarize it
     - provide_intuition_tool: use it when examples and intuition are requested to explain a concept
     - metaphor_tool: use it to provide metaphors that are easier to understand when explaining concepts
 - Add `MichelAgent` as a tool from `JuliusAgent`

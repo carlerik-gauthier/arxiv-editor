@@ -3,10 +3,6 @@ import os
 import tiktoken
 import pandas as pd
 from copy import deepcopy
-from sentence_transformers import SentenceTransformer
-from bertopic import BERTopic
-from bertopic.representation import OpenAI as OpenAIRepresentation
-from bertopic.representation import MaximalMarginalRelevance, KeyBERTInspired
 from dotenv import load_dotenv
 from typing import List
 from src_new.data_object import Paper
@@ -33,6 +29,11 @@ topic: <topic label>
 """
 # FIX papers to paper_path; and papers is now a pandas dataframe
 def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
+    from bertopic import BERTopic
+    from bertopic.representation import OpenAI as OpenAIRepresentation
+    from bertopic.representation import MaximalMarginalRelevance, KeyBERTInspired
+    from sentence_transformers import SentenceTransformer
+
     data = pd.read_csv(path)
     data['docs'] = data[["title", "summary"]].apply(
         lambda arr: f"{arr[0]} -- {arr[1]}", raw=True, axis=1

@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from agents import Agent, Runner, function_tool, trace
 
 from src_new.chris_agent import build_chris_agent
+from src_new.michel_agent import build_michel_agent
 
 
 JULIUS_SYSTEM_PROMPT = (
@@ -25,8 +26,10 @@ JULIUS_SYSTEM_PROMPT = (
     "- Create a concise execution plan before writing the final one-pager.\n"
     "- Determine how many topics are needed from ChrisAgent.\n"
     "- Delegate probability/statistics content requests to ChrisAgent.\n"
+    "- Delegate clarity, intuition, and metaphor work to MichelAgent when the audience is general or when the user asks for simpler explanations.\n"
     "- When you call ChrisAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
+    "- When you call MichelAgent, pass the exact concept or draft text that needs to be made clearer.\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
     "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
     "- If the request is outside probability/statistics, reply politely that you do not have knowledge about it.\n"
@@ -80,22 +83,33 @@ def build_julius_agent() -> Agent:
         ),
         max_turns=6,
     )
+    michel_tool = build_michel_agent().as_tool(
+        tool_name="michel_agent_tool",
+        tool_description=(
+            "General-audience explainer. Use it to simplify technical mathematics, add intuition, "
+            "or create metaphors for non-experts."
+        ),
+        max_turns=6,
+    )
     instructions = (
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
         "Use `chris_agent_tool` to delegate probability/statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
+        "Use `michel_agent_tool` when the user wants a general-audience explanation, vulgarization, intuition, "
+        "examples, metaphors, or simpler phrasing.\n"
         "Use `editorial_one_pager_tool` to turn the specialist output into the final one-pager.\n"
         "If the user did not specify an audience, assume LinkedIn.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
         "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
         "and whether main results are required.\n"
+        "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
     )
 
     return Agent(
         name="JuliusAgent",
         instructions=instructions,
-        tools=[extract_date_range_tool, chris_tool, editorial_one_pager_tool],
+        tools=[extract_date_range_tool, chris_tool, michel_tool, editorial_one_pager_tool],
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
     )
 
@@ -110,7 +124,7 @@ def run_julius_agent(
         "phase4-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
-            "has_history": bool(history),
+            "has_history": 'True' if bool(history) else 'False',
         },
         disabled=os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "0") == "1",
     ):
@@ -124,8 +138,9 @@ def run_julius_agent(
                 "tool_parameters": [],
             }
 
+        enriched_message = _enrich_message_for_michel(message, history)
         agent = build_julius_agent()
-        result = Runner.run_sync(agent, message, max_turns=DEFAULT_MAX_TURNS)
+        result = Runner.run_sync(agent, enriched_message, max_turns=DEFAULT_MAX_TURNS)
 
     return {
         "reply": str(getattr(result, "final_output", "")),
@@ -384,12 +399,25 @@ def _render_editorial_topic(topic: Dict[str, Any], index: int) -> str:
         or ""
     ).strip()
     representative_papers = topic.get("representative_papers") or topic.get("papers") or []
+    clearer_text = str(
+        topic.get("clearer_text")
+        or topic.get("clear_explanation")
+        or ""
+    ).strip()
+    intuition = str(topic.get("intuition") or "").strip()
+    metaphor = str(topic.get("metaphor") or "").strip()
 
     section_lines = [f"## {index}. {title}"]
     if description:
         section_lines.append(description)
     if importance:
         section_lines.append(f"Main results and importance: {importance}")
+    if clearer_text:
+        section_lines.append(f"Clear explanation: {clearer_text}")
+    if intuition:
+        section_lines.append(f"Intuition: {intuition}")
+    if metaphor:
+        section_lines.append(f"Metaphor: {metaphor}")
     if representative_papers:
         section_lines.append("Representative papers:")
         for paper_index, paper in enumerate(representative_papers, start=1):
@@ -412,6 +440,55 @@ def _render_paper_reference(paper: Any) -> str:
             parts.append(f"- {main_result}")
         return " ".join(parts)
     return str(paper).strip() or "Untitled paper"
+
+
+def _enrich_message_for_michel(
+    message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """Add an explicit simplification requirement when the request implies vulgarization."""
+    if not _should_delegate_to_michel(message, history):
+        return message
+
+    return (
+        f"{message}\n\n"
+        "General-audience support is required. Use MichelAgent to simplify technical ideas, "
+        "provide intuition, examples, or metaphors where the explanation would otherwise be too technical."
+    )
+
+
+def _should_delegate_to_michel(
+    message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> bool:
+    """Detect requests that need MichelAgent's vulgarization support."""
+    text_parts = [message]
+    for item in history or []:
+        content = str(item.get("content", "")).strip()
+        if content:
+            text_parts.append(content)
+    normalized = " ".join(text_parts).casefold()
+    triggers = (
+        "general audience",
+        "non-expert",
+        "non expert",
+        "beginner",
+        "linkedin",
+        "simple",
+        "simpler",
+        "plain english",
+        "accessible",
+        "intuitive",
+        "intuition",
+        "metaphor",
+        "example",
+        "examples",
+        "vulgarize",
+        "clarify",
+        "clearer",
+        "explain simply",
+    )
+    return any(trigger in normalized for trigger in triggers)
 
 
 

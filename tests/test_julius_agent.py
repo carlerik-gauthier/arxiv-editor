@@ -63,13 +63,28 @@ def test_is_probability_or_statistics_request_uses_llm_fallback(monkeypatch):
     assert "YES or NO" in str(captured["input"])
 
 
-def test_infer_requested_topic_count_reads_digits():
-    assert phase4._infer_requested_topic_count("Give me 9 topics.") == 5
+def test_should_delegate_to_michel_detects_general_audience_prompt():
+    assert phase4._should_delegate_to_michel(
+        "Explain the main results for a LinkedIn audience with intuition and examples."
+    )
 
 
-def test_infer_requested_topic_count_reads_words_from_history():
-    history = [{"role": "user", "content": "I need two topics for a LinkedIn post."}]
-    assert phase4._infer_requested_topic_count("Use the same scope.", history=history) == 2
+def test_should_delegate_to_michel_uses_history():
+    history = [{"role": "user", "content": "Keep this accessible for non-experts."}]
+    assert phase4._should_delegate_to_michel("Use the same scope.", history=history)
+
+
+def test_enrich_message_for_michel_appends_guidance_when_needed():
+    enriched = phase4._enrich_message_for_michel(
+        "Summarize recent probability papers for beginners."
+    )
+    assert "General-audience support is required" in enriched
+    assert "MichelAgent" in enriched
+
+
+def test_enrich_message_for_michel_leaves_message_unchanged_when_not_needed():
+    message = "Summarize recent probability papers with main results."
+    assert phase4._enrich_message_for_michel(message) == message
 
 
 def test_extract_date_range_tool_wraps_helper(monkeypatch):
@@ -95,6 +110,9 @@ def test_editorial_one_pager_tool_renders_specialist_topics():
                     "title": "Stochastic processes",
                     "description": "Recent papers on scaling limits and Markov dynamics.",
                     "main_results_and_importance": "They sharpen convergence guarantees.",
+                    "clearer_text": "The papers explain how random systems settle into predictable behavior.",
+                    "intuition": "They compare long-run randomness with stable averages.",
+                    "metaphor": "It is like watching stirred water become calm again.",
                     "representative_papers": [
                         {
                             "title": "A paper on Markov chains",
@@ -113,6 +131,9 @@ def test_editorial_one_pager_tool_renders_specialist_topics():
     assert "Execution Plan" in result["content"]
     assert "Stochastic processes" in result["content"]
     assert "arXiv:2605.00001" in result["content"]
+    assert "Clear explanation:" in result["content"]
+    assert "Intuition:" in result["content"]
+    assert "Metaphor:" in result["content"]
 
 
 def test_run_julius_agent_declines_out_of_scope_request():
@@ -148,7 +169,7 @@ def test_run_julius_agent_traces_out_of_scope_request(monkeypatch):
     assert captured["entered"] is True
     assert captured["exited"] is True
     assert captured["name"] == "phase4-julius-agent-run"
-    assert captured["metadata"] == {"agent": "JuliusAgent", "has_history": False}
+    assert captured["metadata"] == {"agent": "JuliusAgent", "has_history": "False"}
 
 
 def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
@@ -191,3 +212,33 @@ def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
     assert captured["agent_name"] == "JuliusAgent"
     assert captured["max_turns"] == phase4.DEFAULT_MAX_TURNS
     assert captured["input"] == "Give me two topics on Markov chains."
+
+
+def test_build_julius_agent_registers_michel_tool(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeSpecialist:
+        def __init__(self, tool_name):
+            self.tool_name = tool_name
+
+        def as_tool(self, tool_name, tool_description, max_turns):
+            return {
+                "tool_name": tool_name,
+                "tool_description": tool_description,
+                "max_turns": max_turns,
+            }
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(phase4, "build_chris_agent", lambda: FakeSpecialist("chris"))
+    monkeypatch.setattr(phase4, "build_michel_agent", lambda: FakeSpecialist("michel"))
+    monkeypatch.setattr(phase4, "Agent", FakeAgent)
+
+    phase4.build_julius_agent()
+
+    tool_names = [tool["tool_name"] for tool in captured["tools"] if isinstance(tool, dict)]
+    assert "chris_agent_tool" in tool_names
+    assert "michel_agent_tool" in tool_names
+    assert "MichelAgent" in captured["instructions"]

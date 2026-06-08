@@ -155,29 +155,29 @@ def test_get_arxiv_categories_probability_only(monkeypatch):
 
 def test_get_arxiv_categories_statistics_only(monkeypatch):
     def fake_classifier(_message: str):
-        return ["stat.TH"]
+        return ["math.ST"]
 
     monkeypatch.setattr(phase1, "_classify_categories_with_llm", fake_classifier)
     categories = phase1._get_arxiv_categories("need statistical theory references")
-    assert categories == ["stat.TH"]
+    assert categories == ["math.ST"]
 
 
 def test_get_arxiv_categories_both(monkeypatch):
     def fake_classifier(_message: str):
-        return ["math.PR", "stat.TH"]
+        return ["math.PR", "math.ST"]
 
     monkeypatch.setattr(phase1, "_classify_categories_with_llm", fake_classifier)
-    categories = phase1._get_arxiv_categories("math.PR and stat.TH papers")
-    assert categories == ["math.PR", "stat.TH"]
+    categories = phase1._get_arxiv_categories("math.PR and math.ST papers")
+    assert categories == ["math.PR", "math.ST"]
 
 
 def test_get_arxiv_categories_filters_unsupported_and_dedupes(monkeypatch):
     def fake_classifier(_message: str):
-        return ["cs.LG", "math.PR", "math.PR", "stat.TH"]
+        return ["cs.LG", "math.PR", "math.PR", "math.ST"]
 
     monkeypatch.setattr(phase1, "_classify_categories_with_llm", fake_classifier)
     categories = phase1._get_arxiv_categories("something")
-    assert categories == ["math.PR", "stat.TH"]
+    assert categories == ["math.PR", "math.ST"]
 
 
 def test_extract_tool_parameters_parses_function_call_arguments():

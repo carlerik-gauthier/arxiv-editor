@@ -323,7 +323,7 @@ def _get_arxiv_categories(message: str) -> List[str]:
     normalized = {category for category in raw_categories if category in CHRIS_CATEGORIES}
     if not normalized:
         return list(CHRIS_CATEGORIES)
-    return list(normalized)
+    return [category for category in CHRIS_CATEGORIES if category in normalized]
 
 def _save_papers_to_csv(papers: List[Paper], output_path: Path) -> None:
     """Save fetched papers as CSV rows."""
