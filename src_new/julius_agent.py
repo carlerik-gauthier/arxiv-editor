@@ -14,6 +14,24 @@ from agents import Agent, Runner, function_tool, trace
 from src_new.chris_agent import build_chris_agent
 from src_new.michel_agent import build_michel_agent
 
+EXPECTED_FORMAT_OUTPUT_RULE = """
+    For every topic, the expected output structure is:
+        # <TOPIC TITLE>: 
+        <topic description>
+        <pedagogical explanation for topic description>
+        **Representative papers**
+        1. <paper title>, <paper arxiv_id>
+        <Representative paper main results>
+        <pedagogical explanation for reprensative main result> 
+        2. <paper title>, <paper arxiv_id>
+        <Representative paper main results>
+        <pedagogical explanation for reprensative main result>
+    Repeat as many times as there are representative papers.
+    Mandatory elements are <TOPIC TITLE>, <topic description> or <pedagogical explanation for topic description>, <paper title> and <paper arxiv_id>.
+    <pedagogical explanation for reprensative main result> should be provided if MichelAgent is called.
+    <pedagogical explanation for topic description> should be provided if MichelAgent is called. If necessary it can replace <topic description> 
+    They must be returned regardless of user request
+"""
 
 JULIUS_SYSTEM_PROMPT = (
     "Editor and coordinator role, responsible for planning, delegation and generating the one-pager. "
@@ -104,6 +122,8 @@ def build_julius_agent() -> Agent:
         "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
         "and whether main results are required.\n"
         "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
+        "If you delegated to MichelAgent, you must use `editorial_one_pager_tool` to finalize the one-pager with MichelAgent proposals\n"
+        f"Never forget the expected format rule : {EXPECTED_FORMAT_OUTPUT_RULE}"
     )
 
     return Agent(
@@ -138,9 +158,9 @@ def run_julius_agent(
                 "tool_parameters": [],
             }
 
-        enriched_message = _enrich_message_for_michel(message, history)
+        # enriched_message = _enrich_message_for_michel(message, history)
         agent = build_julius_agent()
-        result = Runner.run_sync(agent, enriched_message, max_turns=DEFAULT_MAX_TURNS)
+        result = Runner.run_sync(agent, message, max_turns=DEFAULT_MAX_TURNS)
 
     return {
         "reply": str(getattr(result, "final_output", "")),
@@ -442,53 +462,53 @@ def _render_paper_reference(paper: Any) -> str:
     return str(paper).strip() or "Untitled paper"
 
 
-def _enrich_message_for_michel(
-    message: str,
-    history: Optional[List[Dict[str, str]]] = None,
-) -> str:
-    """Add an explicit simplification requirement when the request implies vulgarization."""
-    if not _should_delegate_to_michel(message, history):
-        return message
+# def _enrich_message_for_michel(
+#     message: str,
+#     history: Optional[List[Dict[str, str]]] = None,
+# ) -> str:
+#     """Add an explicit simplification requirement when the request implies vulgarization."""
+#     if not _should_delegate_to_michel(message, history):
+#         return message
 
-    return (
-        f"{message}\n\n"
-        "General-audience support is required. Use MichelAgent to simplify technical ideas, "
-        "provide intuition, examples, or metaphors where the explanation would otherwise be too technical."
-    )
+#     return (
+#         f"{message}\n\n"
+#         "General-audience support is required. Use MichelAgent to simplify technical ideas, "
+#         "provide intuition, examples, or metaphors where the explanation would otherwise be too technical."
+#     )
 
 
-def _should_delegate_to_michel(
-    message: str,
-    history: Optional[List[Dict[str, str]]] = None,
-) -> bool:
-    """Detect requests that need MichelAgent's vulgarization support."""
-    text_parts = [message]
-    for item in history or []:
-        content = str(item.get("content", "")).strip()
-        if content:
-            text_parts.append(content)
-    normalized = " ".join(text_parts).casefold()
-    triggers = (
-        "general audience",
-        "non-expert",
-        "non expert",
-        "beginner",
-        "linkedin",
-        "simple",
-        "simpler",
-        "plain english",
-        "accessible",
-        "intuitive",
-        "intuition",
-        "metaphor",
-        "example",
-        "examples",
-        "vulgarize",
-        "clarify",
-        "clearer",
-        "explain simply",
-    )
-    return any(trigger in normalized for trigger in triggers)
+# def _should_delegate_to_michel(
+#     message: str,
+#     history: Optional[List[Dict[str, str]]] = None,
+# ) -> bool:
+#     """Detect requests that need MichelAgent's vulgarization support."""
+#     text_parts = [message]
+#     for item in history or []:
+#         content = str(item.get("content", "")).strip()
+#         if content:
+#             text_parts.append(content)
+#     normalized = " ".join(text_parts).casefold()
+#     triggers = (
+#         "general audience",
+#         "non-expert",
+#         "non expert",
+#         "beginner",
+#         "linkedin",
+#         "simple",
+#         "simpler",
+#         "plain english",
+#         "accessible",
+#         "intuitive",
+#         "intuition",
+#         "metaphor",
+#         "example",
+#         "examples",
+#         "vulgarize",
+#         "clarify",
+#         "clearer",
+#         "explain simply",
+#     )
+#     return any(trigger in normalized for trigger in triggers)
 
 
 
