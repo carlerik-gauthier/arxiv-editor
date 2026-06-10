@@ -72,6 +72,99 @@ def test_extract_date_range_tool_wraps_helper(monkeypatch):
     assert result == {"start_date": "2026-01-01", "end_date": "2026-01-31"}
 
 
+def test_editorial_one_pager_tool_uses_llm(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        output_text = (
+            '{"status":"compiled","title":"ArXiv Research Brief","audience":"LinkedIn","tone":"professional",'
+            '"topic_count":1,"selected_topics":[{"title":"Topic A"}],"omitted_topics":[],'
+            '"needs_michel":false,"clarity_review":{"needs_michel":false},'
+            '"editorial_summary":{"selected_titles":["Topic A"]},"content":"# Draft"}'
+        )
+
+    class FakeResponses:
+        def create(self, model, input, temperature):
+            captured["model"] = model
+            captured["input"] = input
+            captured["temperature"] = temperature
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+            self.responses = FakeResponses()
+
+    def fake_getenv(key, default=None):
+        values = {
+            "OPENAI_API_KEY": "test-api-key",
+            "OPENAI_MODEL": "test-model",
+        }
+        return values.get(key, default)
+
+    monkeypatch.setattr(phase4, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(phase4.os, "getenv", fake_getenv)
+
+    wrapped = phase4.editorial_one_pager_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
+    result = wrapped(
+        [
+            {"audience": "LinkedIn", "tone": "professional"},
+            {"ChrisAgent": {"topic_summaries": [{"title": "Topic A"}]}},
+        ]
+    )
+
+    assert captured["api_key"] == "test-api-key"
+    assert captured["model"] == "test-model"
+    assert captured["temperature"] == 0.2
+    assert "ChrisAgent" in str(captured["input"])
+    assert result["status"] == "compiled"
+    assert result["topic_count"] == 1
+
+
+def test_finalize_editorial_one_pager_tool_uses_llm(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        output_text = (
+            '{"status":"ready_to_deliver","final_decision":"deliver","reason":"Clear and complete.",'
+            '"content":"# Draft","title":"Brief","audience":"LinkedIn","tone":"concise",'
+            '"needs_further_revision":false,"michel_assessment":{"satisfactory":true},'
+            '"editorial_summary":{"selected_titles":["Topic A"]}}'
+        )
+
+    class FakeResponses:
+        def create(self, model, input, temperature):
+            captured["model"] = model
+            captured["input"] = input
+            captured["temperature"] = temperature
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+            self.responses = FakeResponses()
+
+    def fake_getenv(key, default=None):
+        values = {
+            "OPENAI_API_KEY": "test-api-key",
+            "OPENAI_MODEL": "test-model",
+        }
+        return values.get(key, default)
+
+    monkeypatch.setattr(phase4, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(phase4.os, "getenv", fake_getenv)
+
+    wrapped = phase4.finalize_editorial_one_pager_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
+    result = wrapped("draft text", '{"satisfactory":true}')
+
+    assert captured["api_key"] == "test-api-key"
+    assert captured["model"] == "test-model"
+    assert captured["temperature"] == 0.2
+    assert "draft text" in str(captured["input"])
+    assert result["status"] == "ready_to_deliver"
+    assert result["final_decision"] == "deliver"
+
+
 def test_run_julius_agent_declines_out_of_scope_request():
     result = phase4.run_julius_agent("Cover recent algebra papers.")
     assert "only coordinate probability or statistics" in result["reply"]

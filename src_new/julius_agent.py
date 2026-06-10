@@ -250,7 +250,69 @@ def editorial_one_pager_tool(
     audience and for turning specialist results into a coherent editorial brief.
     Example = specialized_agent_input = [{'ChrisAgent': <output>}, {'MichelAgent': <output>}]
     """
-    # todo: implement it. This tool 
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for editorial_one_pager_tool")
+
+    payload = _normalize_editorial_handoff(specialized_agent_input)
+    payload.setdefault("title", title)
+    payload.setdefault("audience", audience)
+    payload.setdefault("tone", tone)
+
+    prompt = (
+        "You are an editorial assistant for a one-pager.\n"
+        "Use the specialist handoff to select the best topics, decide whether general-audience "
+        "explanation, vulgarization, intuition, or metaphors are needed, and write a coherent first draft.\n"
+        "Return JSON only with keys: status, title, audience, tone, topic_count, selected_topics, "
+        "omitted_topics, needs_michel, clarity_review, editorial_summary, content.\n"
+        "Do not invent unsupported facts.\n"
+        "Use concise editorial prose.\n"
+        f"Specialist handoff JSON:\n{json.dumps(payload, ensure_ascii=False, default=str, indent=2)}"
+    )
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"editorial_one_pager_tool failed: {exc}") from exc
+
+    content = (response.output_text or "").strip()
+    if not content:
+        raise RuntimeError("editorial_one_pager_tool returned an empty response")
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("editorial_one_pager_tool did not return valid JSON") from exc
+    if not isinstance(result, dict):
+        raise RuntimeError("editorial_one_pager_tool must return a JSON object")
+
+    result.setdefault("status", "compiled")
+    result.setdefault("title", payload["title"])
+    result.setdefault("audience", payload["audience"])
+    result.setdefault("tone", payload["tone"])
+    result.setdefault("selected_topics", [])
+    result.setdefault("omitted_topics", [])
+    result.setdefault("needs_michel", False)
+    result.setdefault("clarity_review", {})
+    result.setdefault("editorial_summary", {})
+    result.setdefault("content", "")
+    result["topic_count"] = len(result.get("selected_topics") or [])
+    return result
+
+
+def _normalize_editorial_handoff(specialized_agent_input: List[Any]) -> Dict[str, Any]:
+    """Normalize the list-based specialist handoff into a single payload."""
+    payload: Dict[str, Any] = {}
+    for item in specialized_agent_input or []:
+        if isinstance(item, dict):
+            payload.update(item)
+    return payload
 
 @function_tool(name_override="finalize_editorial_one_pager_tool")
 def finalize_editorial_one_pager_tool(
@@ -260,8 +322,56 @@ def finalize_editorial_one_pager_tool(
     tone: str = "professional",
 ) -> Dict[str, Any]:
     """Finalize a one-pager draft using MichelAgent's editorial suggestions."""
-    # todo: implement it
-    pass
+    prompt = (
+        "You are finalizing an editorial one-pager.\n"
+        "Review the draft and MichelAgent suggestions.\n"
+        "Decide if the one-pager can be delivered or if more editorial work is needed.\n"
+        "Return JSON only with keys: status, final_decision, reason, content, title, audience, tone, "
+        "needs_further_revision, michel_assessment, editorial_summary.\n"
+        "Use status=ready_to_deliver and final_decision=deliver only if the draft is clear enough for the "
+        "target audience and MichelAgent feedback has been integrated.\n"
+        f"Target audience: {audience}\n"
+        f"Tone: {tone}\n"
+        f"Draft:\n{one_pager}\n"
+        f"MichelAgent output:\n{michel_agent_output}"
+    )
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for finalize_editorial_one_pager_tool")
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"finalize_editorial_one_pager_tool failed: {exc}") from exc
+
+    content = (response.output_text or "").strip()
+    if not content:
+        raise RuntimeError("finalize_editorial_one_pager_tool returned an empty response")
+
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("finalize_editorial_one_pager_tool did not return valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("finalize_editorial_one_pager_tool must return a JSON object")
+
+    payload.setdefault("status", "needs_editorial_revision")
+    payload.setdefault("final_decision", "revise")
+    payload.setdefault("needs_further_revision", payload.get("status") != "ready_to_deliver")
+    payload.setdefault("title", "ArXiv Research Brief")
+    payload.setdefault("audience", audience)
+    payload.setdefault("tone", tone)
+    payload.setdefault("michel_assessment", {})
+    payload.setdefault("editorial_summary", {})
+    payload.setdefault("content", one_pager)
+    return payload
 
 @function_tool(name_override="extract_date_range_tool")
 def extract_date_range_tool(message: str) -> Dict[str, Any]:
@@ -370,4 +480,3 @@ def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:
             }
         )
     return extracted
-
