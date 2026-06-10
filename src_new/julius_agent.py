@@ -255,18 +255,17 @@ def editorial_one_pager_tool(
         raise RuntimeError("OPENAI_API_KEY is required for editorial_one_pager_tool")
 
     payload = _normalize_editorial_handoff(specialized_agent_input)
-    payload.setdefault("title", title)
-    payload.setdefault("audience", audience)
-    payload.setdefault("tone", tone)
 
     prompt = (
-        "You are an editorial assistant for a one-pager.\n"
+        f"You are an editorial assistant for a one-pager called {title}.\n"
         "Use the specialist handoff to select the best topics, decide whether general-audience "
         "explanation, vulgarization, intuition, or metaphors are needed, and write a coherent first draft.\n"
         "Return JSON only with keys: status, title, audience, tone, topic_count, selected_topics, "
         "omitted_topics, needs_michel, clarity_review, editorial_summary, content.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
+        f"Target Audience is {audience} and the one-pager tone is expected to be {tone}\n"
+        f"The title is {title}\n"
         f"Specialist handoff JSON:\n{json.dumps(payload, ensure_ascii=False, default=str, indent=2)}"
     )
 
@@ -293,9 +292,9 @@ def editorial_one_pager_tool(
         raise RuntimeError("editorial_one_pager_tool must return a JSON object")
 
     result.setdefault("status", "compiled")
-    result.setdefault("title", payload["title"])
-    result.setdefault("audience", payload["audience"])
-    result.setdefault("tone", payload["tone"])
+    result.setdefault("title", title)
+    result.setdefault("audience", audience)
+    result.setdefault("tone", tone)
     result.setdefault("selected_topics", [])
     result.setdefault("omitted_topics", [])
     result.setdefault("needs_michel", False)
