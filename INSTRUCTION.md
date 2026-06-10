@@ -87,3 +87,25 @@ provide the two main topics of probability papers from 2026-05-25 to 2026-05-29.
 
 
 I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described.
+
+
+Findings
+
+  1. src_new/julius_agent.py:228-233 makes the module unloadable. @function_tool rejects specialized_agent_inputs: List[Dict[str, str]] under the Agents SDK strict schema, and pytest
+     -q tests/test_julius_agent.py fails during collection with UserError: additionalProperties should not be set for object types. As written, Julius cannot even start the editorial
+     flow.
+
+  2. src_new/julius_agent.py:241 would crash on first use even if the import issue were fixed. The function argument is specialized_agent_inputs, but the body calls
+     _parse_editorial_payload(specialized_agent_input). That is an immediate NameError, so editorial_one_pager_tool cannot build a first draft.
+
+  3. src_new/julius_agent.py:126,133 advertises a finalize_editorial_one_pager_tool, but no such tool is defined or registered anywhere in the repo. That breaks the second half of the
+     workflow you described: MichelAgent output can never be used to decide “needs more editorial work” vs “ready to deliver.” The only related capability today is Michel’s assessment
+     output in src_new/michel_agent.py:116-149, and Julius has no consumer for it.
+
+  4. The handoff contract between Chris and the editorial tool is inconsistent. Chris is told to return {'ChrisAgent': ...} following a markdown-like template (src_new/
+     chris_agent.py:272-273), while Julius only knows how to extract topic dictionaries from agent_results, topic_summaries, topics, specialist_results, or results (src_new/
+     julius_agent.py:290-319). If Julius passes Chris’s output through directly, _normalize_editorial_topics will usually find no usable topics and return the needs_topics fallback
+     instead of drafting the one-pager.
+
+  5. The current editorial_one_pager_tool is a formatter, not an editorial step. In src_new/julius_agent.py:246-277 and 399-447, it simply renders every topic it receives; it never selects which topics to
+     keep, never assesses whether the topic description is too technical for a general audience, and never decides whether Michel clarification is still needed. That misses the core

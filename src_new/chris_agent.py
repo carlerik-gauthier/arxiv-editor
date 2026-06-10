@@ -29,19 +29,33 @@ DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_OUTPUT_DIR = Path("data/paper")
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_PDF_OUTPUT_DIR = Path("data/pdfs")
-EXPECTED_FORMAT_OUTPUT_RULE = """
-    For every topic, the expected output structure is:
-        # <TOPIC TITLE>: 
-        <topic description>
-        **Reprensative papers**
-        1. <paper title>, <paper arxiv_id>
-        <reprensative paper main results>
-        2. <paper title>, <paper arxiv_id>
-        <reprensative paper main results>
-    Repeat as many times as there are representative papers.
-    Mandatory elements are <TOPIC TITLE>, <topic description>, <paper title> and <paper arxiv_id>
-    They must be returned regardless of user request
+
+TOPIC_REPRESENTATION_DICT = """
+    {
+        'topic_title': <TOPIC TITLE>,
+        'topic_description': <topic description>,
+        'topic_count':  <topic count>
+        'representative papers': [
+            {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>},
+            {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>},
+            ...
+            ]
+    }
 """
+
+# EXPECTED_FORMAT_OUTPUT_RULE = """
+#     For every topic, the expected output structure is:
+#         # <TOPIC TITLE>: 
+#         <topic description>
+#         **Reprensative papers**
+#         1. <paper title>, <paper arxiv_id>
+#         <reprensative paper main results>
+#         2. <paper title>, <paper arxiv_id>
+#         <reprensative paper main results>
+#     Repeat as many times as there are representative papers.
+#     Mandatory elements are <TOPIC TITLE>, <topic description>, <paper title> and <paper arxiv_id>
+#     They must be returned regardless of user request
+# """
 
 @function_tool(name_override="check_paper_tool")
 def check_paper_tool(
@@ -264,12 +278,14 @@ def build_chris_agent() -> Agent:
         instructions=(
             f"{CHRIS_SYSTEM_PROMPT}\n"
             f"Allowed categories only: {', '.join(CHRIS_CATEGORIES)}.\n"
-            "Use `get_arxiv_categories_tool` when category inference is needed.\n"
+            "Use `get_arxiv_categories_tool` to get the Arxiv categories to invoke from the user message.\n"
             "Use `check_paper_tool` to verify whether CSV data already exists for the requested date range.\n"
             "Use `arxiv_fetcher_tool` if data does not exist. You must only look at inferred categories. \n"
             "Use `find_topic_tool` only after papers were fetched and a CSV path is available.\n"
             "Use `extract_main_result_tool` when full-paper main results are requested, passing arxiv_id.\n"
-            f"Your answer **must** follow the output structure RULE: {EXPECTED_FORMAT_OUTPUT_RULE}"
+            f"When you answer back to JuliusAgent, you **must** return a JSON with this exact schema:"
+            f"{{'ChrisAgent': [{TOPIC_REPRESENTATION_DICT}]}}\n"
+            "where the length of the 'representative papers' list is equal to the number of requested topics"
         ),
         tools=[
             get_arxiv_categories_tool,
