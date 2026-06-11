@@ -58,7 +58,7 @@ JULIUS_SYSTEM_PROMPT = (
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_MODEL = "gpt-4.1-mini"
-DEFAULT_MAX_TURNS = 8
+DEFAULT_MAX_TURNS = 20
 
 _NUMBER_WORDS = {
     "one": 1,
@@ -120,15 +120,17 @@ def build_julius_agent() -> Agent:
         "examples, metaphors, or simpler phrasing.\n"
         "Use `editorial_one_pager_tool` to make the editorial work and build a first draft.\n"
         "Use `finalize_editorial_one_pager_tool` to finalize the one pager\n"
+        "Use `revise_one_pager_tool` to decide if the one pager needs further improvement\n"
         "If the user did not specify an audience, assume LinkedIn.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
-        "When calling `editorial_one_pager_tool`, provide the specialist outputs as a dictionary, the tone and targeted audience.\n"
+        "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, an appealing title, the target audience and the tone to use.\n"
         "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent suggestions, the tone and targeted audience.\n"
         "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
         "and whether main results are required.\n"
         "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
         "If you delegated to MichelAgent, you must use `finalize_editorial_one_pager_tool` to finalize the one-pager with MichelAgent proposals\n"
         "MichelAgent and `finalize_editorial_one_pager_tool` can be called multiple times (no more than 3 times) to refine the one-pager"
+        "When calling `revise_one_pager_tool`, provide the latest one-pager draft, the expected tone and the target audience"
         f"Never forget the expected format rule : {EXPECTED_FORMAT_OUTPUT_RULE}"
     )
 
@@ -141,6 +143,7 @@ def build_julius_agent() -> Agent:
             michel_tool,
             editorial_one_pager_tool,
             finalize_editorial_one_pager_tool,
+            revise_one_pager_tool
         ],
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
     )
@@ -153,7 +156,7 @@ def run_julius_agent(
     """Run one JuliusAgent turn with SDK tracing enabled."""
     history = list(conversation_history or [])
     with trace(
-        "phase4-julius-agent-run",
+        "phase5-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
             "has_history": 'True' if bool(history) else 'False',
@@ -238,8 +241,8 @@ def _is_probability_or_statistics_request_with_llm(text: str) -> bool:
 
 @function_tool(name_override="editorial_one_pager_tool")
 def editorial_one_pager_tool(
-    specialized_agent_input: List[Any],
-    title: str = "ArXiv Research Brief",
+    specialized_agent_input: str,
+    title: str="ArXiv Research Brief",
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
@@ -248,7 +251,7 @@ def editorial_one_pager_tool(
 
     This tool is responsible for adapting the tone and structure to the target
     audience and for turning specialist results into a coherent editorial brief.
-    Example = specialized_agent_input = [{'ChrisAgent': <output>}, {'MichelAgent': <output>}]
+    Example = specialized_agent_input = '{"ChrisAgent": [...], "MichelAgent": {...}}'
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -260,8 +263,8 @@ def editorial_one_pager_tool(
         f"You are an editorial assistant for a one-pager called {title}.\n"
         "Use the specialist handoff to select the best topics, decide whether general-audience "
         "explanation, vulgarization, intuition, or metaphors are needed, and write a coherent first draft.\n"
-        "Return JSON only with keys: status, title, audience, tone, topic_count, selected_topics, "
-        "omitted_topics, needs_michel, clarity_review, editorial_summary, content.\n"
+        "Return JSON only with keys: status, title, topic_count, "
+        "editorial_summary, content.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
         f"Target Audience is {audience} and the one-pager tone is expected to be {tone}\n"
@@ -283,35 +286,45 @@ def editorial_one_pager_tool(
     content = (response.output_text or "").strip()
     if not content:
         raise RuntimeError("editorial_one_pager_tool returned an empty response")
-
     try:
         result = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("editorial_one_pager_tool did not return valid JSON") from exc
+         raise RuntimeError("editorial_one_pager_tool did not return valid JSON") from exc
     if not isinstance(result, dict):
         raise RuntimeError("editorial_one_pager_tool must return a JSON object")
+    
+    # result = _parse_json_object_response(content, "editorial_one_pager_tool")
 
     result.setdefault("status", "compiled")
     result.setdefault("title", title)
-    result.setdefault("audience", audience)
-    result.setdefault("tone", tone)
-    result.setdefault("selected_topics", [])
-    result.setdefault("omitted_topics", [])
-    result.setdefault("needs_michel", False)
-    result.setdefault("clarity_review", {})
+    # result.setdefault("selected_topics", [])
+    # result.setdefault("omitted_topics", [])
     result.setdefault("editorial_summary", {})
     result.setdefault("content", "")
-    result["topic_count"] = len(result.get("selected_topics") or [])
+    # result["topic_count"] = len(result.get("selected_topics") or [])
     return result
 
 
-def _normalize_editorial_handoff(specialized_agent_input: List[Any]) -> Dict[str, Any]:
-    """Normalize the list-based specialist handoff into a single payload."""
+def _normalize_editorial_handoff(specialized_agent_input: Any) -> Dict[str, Any]:
+    """Normalize specialist handoff data into one dictionary payload."""
+    if isinstance(specialized_agent_input, str):
+        raw = specialized_agent_input.strip()
+        if not raw:
+            return {}
+        try:
+            specialized_agent_input = json.loads(raw)
+        except json.JSONDecodeError:
+            return {"raw_input": raw}
+
+    if isinstance(specialized_agent_input, dict):
+        return specialized_agent_input
+
     payload: Dict[str, Any] = {}
     for item in specialized_agent_input or []:
         if isinstance(item, dict):
             payload.update(item)
     return payload
+
 
 @function_tool(name_override="finalize_editorial_one_pager_tool")
 def finalize_editorial_one_pager_tool(
@@ -324,14 +337,14 @@ def finalize_editorial_one_pager_tool(
     prompt = (
         "You are finalizing an editorial one-pager.\n"
         "Review the draft and MichelAgent suggestions.\n"
-        "Decide if the one-pager can be delivered or if more editorial work is needed.\n"
-        "Return JSON only with keys: status, final_decision, reason, content, title, audience, tone, "
+        # "Decide if the one-pager can be delivered or if more editorial work is needed.\n"
+        "Return JSON only with keys: status, final_decision, reason, content, title"
         "needs_further_revision, michel_assessment, editorial_summary.\n"
         "Use status=ready_to_deliver and final_decision=deliver only if the draft is clear enough for the "
         "target audience and MichelAgent feedback has been integrated.\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
-        f"Draft:\n{one_pager}\n"
+        f"Latest Draft:\n{one_pager}\n"
         f"MichelAgent output:\n{michel_agent_output}"
     )
 
@@ -354,12 +367,8 @@ def finalize_editorial_one_pager_tool(
     if not content:
         raise RuntimeError("finalize_editorial_one_pager_tool returned an empty response")
 
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("finalize_editorial_one_pager_tool did not return valid JSON") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("finalize_editorial_one_pager_tool must return a JSON object")
+    # HERE IS THE FIX
+    payload = _parse_json_object_response(content, "finalize_editorial_one_pager_tool")
 
     payload.setdefault("status", "needs_editorial_revision")
     payload.setdefault("final_decision", "revise")
@@ -370,6 +379,59 @@ def finalize_editorial_one_pager_tool(
     payload.setdefault("michel_assessment", {})
     payload.setdefault("editorial_summary", {})
     payload.setdefault("content", one_pager)
+    return payload
+
+@function_tool(name_override="revise_one_pager_tool")
+def revise_one_pager_tool(
+    one_pager: str,
+    audience: str = "LinkedIn",
+    tone: str = "professional",
+) -> Dict[str, Any]:
+    """Assess whether a one-pager fits the requested tone and audience."""
+    prompt = (
+        "You are reviewing a one-pager draft.\n"
+        "Judge whether it matches the requested tone and audience.\n"
+        "If it does not, decide whether the main issue is clarity, metaphor, or intuition.\n"
+        "Return JSON only with keys: status, appropriate, reason, issue_type, recommendation.\n"
+        "Use issue_type=none when the draft is appropriate.\n"
+        "Use issue_type=clarity when the draft is too vague or hard to follow.\n"
+        "Use issue_type=metaphor when the draft needs a metaphor to make the idea accessible.\n"
+        "Use issue_type=intuition when the draft needs more intuitive explanation.\n"
+        f"Target audience: {audience}\n"
+        f"Tone: {tone}\n"
+        f"Draft:\n{one_pager}"
+    )
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for revise_one_pager_tool")
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"revise_one_pager_tool failed: {exc}") from exc
+
+    content = (response.output_text or "").strip()
+    if not content:
+        raise RuntimeError("revise_one_pager_tool returned an empty response")
+
+    # HERE IS THE FIX
+    payload = _parse_json_object_response(content, "revise_one_pager_tool")
+
+    payload.setdefault("status", "ok")
+    payload.setdefault("appropriate", True)
+    payload.setdefault("reason", "")
+    payload.setdefault("issue_type", "")
+    payload.setdefault("recommendation", "")
+    payload["audience"] = audience
+    payload["tone"] = tone
+    payload["one_pager"] = one_pager
     return payload
 
 @function_tool(name_override="extract_date_range_tool")
@@ -450,6 +512,62 @@ def _extract_date_range_with_llm(message: str) -> Dict[str, Optional[str]]:
         "start_date": payload.get("start_date"),
         "end_date": payload.get("end_date"),
     }
+
+
+def _parse_json_object_response(content: str, tool_name: str) -> Dict[str, Any]:
+    """Parse a JSON object even when the model wraps it in fences or short prose."""
+    candidates = [content.strip()]
+
+    fenced_matches = re.findall(r"```(?:json)?\s*(.*?)\s*```", content, flags=re.IGNORECASE | re.DOTALL)
+    candidates.extend(match.strip() for match in fenced_matches if match.strip())
+
+    extracted_object = _extract_first_json_object(content)
+    if extracted_object:
+        candidates.append(extracted_object)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    raise RuntimeError(f"{tool_name} did not return valid JSON")
+
+
+def _extract_first_json_object(content: str) -> Optional[str]:
+    """Return the first balanced JSON object substring found in free-form text."""
+    start = content.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for index in range(start, len(content)):
+            char = content[index]
+            if escape:
+                escape = False
+                continue
+            if char == "\\":
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start:index + 1]
+        start = content.find("{", start + 1)
+    return None
 
 
 def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:

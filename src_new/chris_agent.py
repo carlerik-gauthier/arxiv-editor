@@ -34,7 +34,7 @@ TOPIC_REPRESENTATION_DICT = """
     {
         'topic_title': <TOPIC TITLE>,
         'topic_description': <topic description>,
-        'topic_count':  <topic count>
+        'topic_count':  <topic number of papers>
         'representative_papers': [
             {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>},
             {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>}

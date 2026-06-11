@@ -107,10 +107,7 @@ def test_editorial_one_pager_tool_uses_llm(monkeypatch):
 
     wrapped = phase4.editorial_one_pager_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
     result = wrapped(
-        [
-            {"audience": "LinkedIn", "tone": "professional"},
-            {"ChrisAgent": {"topic_summaries": [{"title": "Topic A"}]}},
-        ]
+        '{"audience":"LinkedIn","tone":"professional","ChrisAgent":{"topic_summaries":[{"title":"Topic A"}]}}'
     )
 
     assert captured["api_key"] == "test-api-key"
@@ -119,6 +116,42 @@ def test_editorial_one_pager_tool_uses_llm(monkeypatch):
     assert "ChrisAgent" in str(captured["input"])
     assert result["status"] == "compiled"
     assert result["topic_count"] == 1
+
+
+def test_editorial_one_pager_tool_accepts_fenced_json(monkeypatch):
+    class FakeResponse:
+        output_text = (
+            "```json\n"
+            '{"status":"compiled","selected_topics":[{"title":"Topic A"}],"content":"# Draft"}\n'
+            "```"
+        )
+
+    class FakeResponses:
+        def create(self, model, input, temperature):
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr(phase4, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(phase4.os, "getenv", lambda key, default=None: {"OPENAI_API_KEY": "test-api-key", "OPENAI_MODEL": "test-model"}.get(key, default))
+
+    wrapped = phase4.editorial_one_pager_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
+    result = wrapped('{"ChrisAgent":{"topic_summaries":[{"title":"Topic A"}]}}')
+
+    assert result["status"] == "compiled"
+    assert result["topic_count"] == 1
+    assert result["content"] == "# Draft"
+
+
+def test_parse_json_object_response_accepts_prose_wrapped_json():
+    parsed = phase4._parse_json_object_response(
+        'Here is the JSON you requested:\n{"status":"compiled","content":"# Draft"}',
+        "editorial_one_pager_tool",
+    )
+
+    assert parsed == {"status": "compiled", "content": "# Draft"}
 
 
 def test_finalize_editorial_one_pager_tool_uses_llm(monkeypatch):
@@ -165,6 +198,51 @@ def test_finalize_editorial_one_pager_tool_uses_llm(monkeypatch):
     assert result["final_decision"] == "deliver"
 
 
+def test_revise_one_pager_tool_uses_llm(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        output_text = '{"reason":"Needs more intuition."}'
+
+    class FakeResponses:
+        def create(self, model, input, temperature):
+            captured["model"] = model
+            captured["input"] = input
+            captured["temperature"] = temperature
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+            self.responses = FakeResponses()
+
+    def fake_getenv(key, default=None):
+        values = {
+            "OPENAI_API_KEY": "test-api-key",
+            "OPENAI_MODEL": "test-model",
+        }
+        return values.get(key, default)
+
+    monkeypatch.setattr(phase4, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(phase4.os, "getenv", fake_getenv)
+
+    wrapped = phase4.revise_one_pager_tool.on_invoke_tool._invoke_tool_impl.__closure__[2].cell_contents
+    result = wrapped("Draft text", audience="LinkedIn", tone="professional")
+
+    assert captured["api_key"] == "test-api-key"
+    assert captured["model"] == "test-model"
+    assert captured["temperature"] == 0.2
+    assert "Draft text" in str(captured["input"])
+    assert result["status"] == "ok"
+    assert result["appropriate"] is True
+    assert result["reason"] == "Needs more intuition."
+    assert result["issue_type"] == ""
+    assert result["recommendation"] == ""
+    assert result["audience"] == "LinkedIn"
+    assert result["tone"] == "professional"
+    assert result["one_pager"] == "Draft text"
+
+
 def test_run_julius_agent_declines_out_of_scope_request():
     result = phase4.run_julius_agent("Cover recent algebra papers.")
     assert "only coordinate probability or statistics" in result["reply"]
@@ -197,7 +275,7 @@ def test_run_julius_agent_traces_out_of_scope_request(monkeypatch):
     assert result["tool_parameters"] == []
     assert captured["entered"] is True
     assert captured["exited"] is True
-    assert captured["name"] == "phase4-julius-agent-run"
+    assert captured["name"] == "phase5-julius-agent-run"
     assert captured["metadata"] == {"agent": "JuliusAgent", "has_history": "False"}
 
 
@@ -272,4 +350,5 @@ def test_build_julius_agent_registers_michel_tool(monkeypatch):
     assert "chris_agent_tool" in tool_names
     assert "michel_agent_tool" in tool_names
     assert "finalize_editorial_one_pager_tool" in sdk_tool_names
+    assert "revise_one_pager_tool" in sdk_tool_names
     assert "MichelAgent" in captured["instructions"]

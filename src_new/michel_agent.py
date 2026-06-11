@@ -12,7 +12,7 @@ from openai import OpenAI
 
 MICHEL_SYSTEM_PROMPT = (
     "Mathematician with outstanding skills to explain complex mathematical ideas to non-experts. "
-    "You specialize in intuitive explanations, simple reformulations, concrete examples, and metaphors."
+    "You specialize in impactful intuitive explanations, simple reformulations, concrete examples, and metaphors."
 )
 DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 6
@@ -33,7 +33,7 @@ def make_clearer_tool(
         f"Tone: {tone}\n"
         f"Text: {text}"
     )
-    # todo : implement LLM evaluation
+
     fallback = {
         "clearer_text": (
             f"For a {audience}, the main idea is: {text.strip()}"
@@ -68,7 +68,6 @@ def provide_intuition_tool(
         f"Concept: {concept}\n"
         f"Current explanation: {explanation}"
     )
-    # todo: Limplement LLM evaluation
     fallback = {
         "intuition": (
             f"Think of {concept} as a way to track the main pattern without carrying every technical detail."
@@ -94,13 +93,13 @@ def metaphor_tool(
 ) -> Dict[str, Any]:
     """Produce metaphors that make a concept easier to picture."""
     prompt = (
-        "Create vivid but accurate metaphors for the concept.\n"
+        "Create vivid but accurate metaphors about the concept.\n"
+        "It must be adapted to the audience.\n"
         "Return JSON with keys: metaphor, why_it_helps.\n"
         f"Audience: {audience}\n"
         f"Concept: {concept}\n"
         f"Current explanation: {explanation}"
     )
-    # todo: implement LLM evaluation
     fallback = {
         "metaphor": (
             f"{concept} is like a map: it leaves out the clutter so you can still see the structure."
@@ -124,7 +123,7 @@ def assess_non_expert_satisfaction_tool(
 ) -> Dict[str, Any]:
     """Assess whether an explanation is satisfactory for non-experts."""
     prompt = (
-        "Assess whether the explanation is satisfactory for non-experts.\n"
+        "Assess whether the explanation about the concept is satisfactory for the audience.\n"
         "Return JSON with keys: satisfactory, reason, missing_elements, improvement_advice.\n"
         "Use a boolean for satisfactory.\n"
         f"Audience: {audience}\n"
@@ -136,7 +135,6 @@ def assess_non_expert_satisfaction_tool(
         audience=audience,
         concept=concept,
     )
-    # todo: implement LLM evaluation
 
     payload = _json_response(prompt, fallback)
     satisfactory = bool(payload.get("satisfactory", False))
@@ -164,8 +162,8 @@ def build_michel_agent() -> Agent:
             "Use `provide_intuition_tool` when examples or intuition are needed.\n"
             "Use `metaphor_tool` when a metaphor can improve understanding.\n"
             "Use `assess_non_expert_satisfaction_tool` to judge whether the explanation is satisfactory for non-experts.\n"
-            "If the assessment says it is not satisfactory, explain why, identify what is missing, and revise using the other tools.\n"
-            "When useful, combine the tools in sequence until the explanation is satisfactory for non-experts."
+            "If the assessment is negative, explain why, identify what is missing, then revise using the other tools.\n"
+            "When relevant, combine the tools in sequence until the explanation is satisfactory for non-experts."
         ),
         tools=[
             make_clearer_tool,
