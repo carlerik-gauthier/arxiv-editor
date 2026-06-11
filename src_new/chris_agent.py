@@ -35,14 +35,16 @@ TOPIC_REPRESENTATION_DICT = """
         'topic_title': <TOPIC TITLE>,
         'topic_description': <topic description>,
         'topic_count':  <topic count>
-        'representative papers': [
+        'representative_papers': [
             {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>},
-            {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>},
-            ...
+            {'paper_title': <paper title>, 'paper_arxiv_id': <paper arxiv_id>, 'main_result': <representative paper main results>}
             ]
-    }
+    }\n
 """
-
+TOPIC_REPRESENTATION_DICT_RULE="""
+- The length of the list returned by representative_papers is equal to the number of representative papers.
+- Mandatory fields are <TOPIC TITLE>, <topic count>, <topic description>, <paper title> and <paper arxiv_id>
+"""
 # EXPECTED_FORMAT_OUTPUT_RULE = """
 #     For every topic, the expected output structure is:
 #         # <TOPIC TITLE>: 
@@ -285,7 +287,8 @@ def build_chris_agent() -> Agent:
             "Use `extract_main_result_tool` when full-paper main results are requested, passing arxiv_id.\n"
             f"When you answer back to JuliusAgent, you **must** return a JSON with this exact schema:"
             f"{{'ChrisAgent': [{TOPIC_REPRESENTATION_DICT}]}}\n"
-            "where the length of the 'representative papers' list is equal to the number of requested topics"
+            "The length of the list to return is equal to the number of requested topics\n"
+            f"The rules of the topic representation dictionary are : {TOPIC_REPRESENTATION_DICT_RULE}"
         ),
         tools=[
             get_arxiv_categories_tool,
