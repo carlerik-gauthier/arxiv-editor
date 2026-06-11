@@ -33,6 +33,7 @@ def make_clearer_tool(
         f"Tone: {tone}\n"
         f"Text: {text}"
     )
+    # todo : implement LLM evaluation
     fallback = {
         "clearer_text": (
             f"For a {audience}, the main idea is: {text.strip()}"
@@ -67,6 +68,7 @@ def provide_intuition_tool(
         f"Concept: {concept}\n"
         f"Current explanation: {explanation}"
     )
+    # todo: Limplement LLM evaluation
     fallback = {
         "intuition": (
             f"Think of {concept} as a way to track the main pattern without carrying every technical detail."
@@ -98,6 +100,7 @@ def metaphor_tool(
         f"Concept: {concept}\n"
         f"Current explanation: {explanation}"
     )
+    # todo: implement LLM evaluation
     fallback = {
         "metaphor": (
             f"{concept} is like a map: it leaves out the clutter so you can still see the structure."
@@ -133,6 +136,8 @@ def assess_non_expert_satisfaction_tool(
         audience=audience,
         concept=concept,
     )
+    # todo: implement LLM evaluation
+
     payload = _json_response(prompt, fallback)
     satisfactory = bool(payload.get("satisfactory", False))
     missing_elements = payload.get("missing_elements") or []
