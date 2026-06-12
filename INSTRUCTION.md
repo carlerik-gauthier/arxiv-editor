@@ -73,6 +73,7 @@
         - System prompt: ML researcher, explains algorithms and applications
     - `JeanBaptisteAgent` is a Data Scientist agent specialized in Data Science/NLP/LLM/Agentic AI (cs.CL, cs.AI, cs.MA, cs.CE). He is very experience in deploying model in production and has a concise communication style
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
+- add an helper between the 2 main families of fields : mathematics (probability, statistics, cryptography, applied mathematics, algebra, geometry, dynamical system), and AI (data science, Machine Learning, Generative AI, NLP, LLM)
 ## Phase 9: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
 - The code must be easy to maintain for future development
