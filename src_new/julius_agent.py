@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import logging
 from datetime import datetime, timedelta
 from openai import OpenAI
 from typing import Any, Dict, Iterable, List, Optional
@@ -13,6 +14,8 @@ from agents import Agent, Runner, function_tool, trace
 
 from src_new.chris_agent import build_chris_agent
 from src_new.michel_agent import build_michel_agent
+
+logger = logging.getLogger(__name__)
 
 EXPECTED_FORMAT_OUTPUT_RULE = """
     For every topic, the expected output structure is:
@@ -106,7 +109,7 @@ def build_julius_agent() -> Agent:
     michel_tool = build_michel_agent().as_tool(
         tool_name="michel_agent_tool",
         tool_description=(
-            "General-audience explainer. Use it to simplify technical mathematics, add intuition, "
+            "General-audience explainer. Use it to get feedback about how to simplify technical mathematics, add intuition, "
             "or create metaphors for non-experts."
         ),
         max_turns=6,
@@ -116,20 +119,22 @@ def build_julius_agent() -> Agent:
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
         "Use `chris_agent_tool` to delegate probability/statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
-        "Use `michel_agent_tool` to provide a general-audience explanation, vulgarization, intuition, "
+        "Use `michel_agent_tool` to get feedbacks about improvement to address non advanced experts by vulgarizing, providing intuitions and metaphors."
         "examples, metaphors, or simpler phrasing.\n"
         "Use `editorial_one_pager_tool` to make the editorial work and build a first draft.\n"
         "Use `finalize_editorial_one_pager_tool` to finalize the one pager\n"
         "Use `revise_one_pager_tool` to decide if the one pager needs further improvement\n"
-        "If the user did not specify an audience, assume LinkedIn.\n"
+        "If the user has not specified an audience, assume LinkedIn.\n"
+        "If the user has not specified a tone, aussume professional.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
         "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, an appealing title, the target audience and the tone to use.\n"
-        "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent suggestions, the tone and targeted audience.\n"
+        "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent feedback, the tone and targeted audience.\n"
         "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
         "and whether main results are required.\n"
         "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
-        "If you delegated to MichelAgent, you must use `finalize_editorial_one_pager_tool` to finalize the one-pager with MichelAgent proposals\n"
-        "MichelAgent and `finalize_editorial_one_pager_tool` can be called multiple times (no more than 3 times) to refine the one-pager"
+        "If you delegated to MichelAgent, you must use `finalize_editorial_one_pager_tool` to finalize the one-pager with MichelAgent's feedbacks\n"
+        "MichelAgent's feedbacks must be considered if you call `michel_agent_tool`"
+        "`michel_agent_tool` and `finalize_editorial_one_pager_tool` can be called multiple times (no more than 3 times) to refine the one-pager"
         "When calling `revise_one_pager_tool`, provide the latest one-pager draft, the expected tone and the target audience"
         f"Never forget the expected format rule : {EXPECTED_FORMAT_OUTPUT_RULE}"
     )
@@ -286,14 +291,15 @@ def editorial_one_pager_tool(
     content = (response.output_text or "").strip()
     if not content:
         raise RuntimeError("editorial_one_pager_tool returned an empty response")
-    try:
-        result = json.loads(content)
-    except json.JSONDecodeError as exc:
-         raise RuntimeError("editorial_one_pager_tool did not return valid JSON") from exc
-    if not isinstance(result, dict):
-        raise RuntimeError("editorial_one_pager_tool must return a JSON object")
+    # try:
+    #     result = json.loads(content)
+    # except json.JSONDecodeError as exc:
+    #      result = _parse_json_object_response(content, "editorial_one_pager_tool")
+    #      raise RuntimeError(f"editorial_one_pager_tool did not return valid JSON. Got {content} AND COULD GET {result}") from exc
+    # if not isinstance(result, dict):
+    #     raise RuntimeError("editorial_one_pager_tool must return a JSON object")
     
-    # result = _parse_json_object_response(content, "editorial_one_pager_tool")
+    result = _parse_json_object_response(content, "editorial_one_pager_tool")
 
     result.setdefault("status", "compiled")
     result.setdefault("title", title)
@@ -329,15 +335,15 @@ def _normalize_editorial_handoff(specialized_agent_input: Any) -> Dict[str, Any]
 @function_tool(name_override="finalize_editorial_one_pager_tool")
 def finalize_editorial_one_pager_tool(
     one_pager: str,
-    michel_agent_output: str,
+    michel_agent_feedback: str,
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
     """Finalize a one-pager draft using MichelAgent's editorial suggestions."""
     prompt = (
         "You are finalizing an editorial one-pager.\n"
-        "Review the draft and MichelAgent suggestions.\n"
-        # "Decide if the one-pager can be delivered or if more editorial work is needed.\n"
+        "Review the draft and take into account MichelAgent feedbacks.\n"
+        f"Remember you addressing to a {audience} audience and your tone must be {tone}.\n"
         "Return JSON only with keys: status, final_decision, reason, content, title"
         "needs_further_revision, michel_assessment, editorial_summary.\n"
         "Use status=ready_to_deliver and final_decision=deliver only if the draft is clear enough for the "
@@ -345,7 +351,7 @@ def finalize_editorial_one_pager_tool(
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
         f"Latest Draft:\n{one_pager}\n"
-        f"MichelAgent output:\n{michel_agent_output}"
+        f"MichelAgent feedback:\n{michel_agent_feedback}"
     )
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -367,7 +373,6 @@ def finalize_editorial_one_pager_tool(
     if not content:
         raise RuntimeError("finalize_editorial_one_pager_tool returned an empty response")
 
-    # HERE IS THE FIX
     payload = _parse_json_object_response(content, "finalize_editorial_one_pager_tool")
 
     payload.setdefault("status", "needs_editorial_revision")
@@ -421,7 +426,6 @@ def revise_one_pager_tool(
     if not content:
         raise RuntimeError("revise_one_pager_tool returned an empty response")
 
-    # HERE IS THE FIX
     payload = _parse_json_object_response(content, "revise_one_pager_tool")
 
     payload.setdefault("status", "ok")

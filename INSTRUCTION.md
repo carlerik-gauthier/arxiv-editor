@@ -40,7 +40,7 @@
     - Coordinate parallel agent execution where possible
     - create an engaging one-pager structure
     - Synthesize results into a coherent one-pager
-## Phase 5: Agent Michel Creation
+## Phase 5: Agent Michel Creation ✅
 - Create an Agent called `MichelAgent` (in honor of Michel Benaim), a mathematician with outstanding skills to provide mathematical intuition on complex mathematical concepts to non-experts using examples and metaphor
 - `MichelAgent` has 3 tools:
     - make_clearer_tool: use it when reformulation is needed to vulgarize it
@@ -48,13 +48,14 @@
     - metaphor_tool: use it to provide metaphors that are easier to understand when explaining concepts
 - Add `MichelAgent` as a tool from `JuliusAgent`
     - `JuliusAgent` calls `MichelAgent` when vulgarization is needed for a general audience. `JuliusAgent` calls `MichelAgent` as long as the result is not satisfactory  
-## Phase 6: Create the other specialized agents
+## Phase 6: Create a second specialized agent
 - Create the following remaining specialized agent
     - `AlainAgent` (in honor of Alain Valette) is a mathematician agent specialized in Algebra (math.AG, math.RA, math.GR). He communicates with passion
         - System prompt: Algebraic structures specialist
     - `AlainAgent` has the same tools as `ChrisAgent`. The difference lies in their expertise fields
-- Add those agents as tools for `JuliusAgent`
+- Add the second agent as tool for `JuliusAgent`
 - Update `JuliusAgent` system prompt by adding "You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent"
+- Add a new tool to `JuliusAgent` to allocate the number of topics per specialized agents based on user requests
 ## Phase 7: Review, Refactor, Unit test
 - Review the code by removing useless line of codes.
 - The code must be easy to maintain for future development
@@ -87,3 +88,5 @@ provide the two main topics of probability papers from 2026-05-25 to 2026-05-29.
 
 
 I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described.
+
+
