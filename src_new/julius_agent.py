@@ -1,4 +1,4 @@
-"""Phase 4 JuliusAgent implementation with OpenAI Agents SDK."""
+"""Phase 6 JuliusAgent implementation with OpenAI Agents SDK."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from agents import Agent, Runner, function_tool, trace
 
+from src_new.alain_agent import build_alain_agent
 from src_new.chris_agent import build_chris_agent
 from src_new.michel_agent import build_michel_agent
 
@@ -46,16 +47,16 @@ JULIUS_SYSTEM_PROMPT = (
     "You own the editorial workflow:\n"
     "- Parse the user request, including date range, topics, and preferences.\n"
     "- Create a concise execution plan before writing the final one-pager.\n"
-    "- Determine how many topics are needed from ChrisAgent.\n"
-    "- Delegate probability/statistics content requests to ChrisAgent.\n"
+    "- You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent.\n"
+    "- Use ChrisAgent for probability/statistics content and AlainAgent for algebra content.\n"
     "- Delegate clarity, intuition, and metaphor work to MichelAgent when the audience is general or when the user asks for simpler explanations.\n"
-    "- When you call ChrisAgent, make the request self-contained and include the date range, topic count, "
+    "- When you call ChrisAgent or AlainAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
     "- When you call MichelAgent, pass the exact concept or draft text that needs to be made clearer.\n"
     "- You must never clarity, intuition, and metaphor work by yourself\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
     "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
-    "- If the request is outside probability/statistics, reply politely that you do not have knowledge about it.\n"
+    "- If the request is outside probability/statistics or algebra, reply politely that you do not have knowledge about it.\n"
 )
 
 DEFAULT_MAX_TOPICS = 5
@@ -95,14 +96,76 @@ _SUPPORTED_PR_ST_KEYWORDS = (
     "math.st",
 )
 
+_SUPPORTED_ALGEBRA_KEYWORDS = (
+    "algebra",
+    "algebraic",
+    "algebraic geometry",
+    "algebraic topology",
+    "commutative algebra",
+    "ring",
+    "rings",
+    "algebra",
+    "algebras",
+    "ideal",
+    "ideals",
+    "module",
+    "modules",
+    "group",
+    "groups",
+    "group theory",
+    "representation theory",
+    "galois",
+    "math.ag",
+    "math.ra",
+    "math.gr",
+    "math.at"
+)
+
+_GENERIC_RESEARCH_KEYWORDS = (
+    "paper",
+    "papers",
+    "topic",
+    "topics",
+    "arxiv",
+    "research",
+    "one-pager",
+    "summary",
+    "summarize",
+)
+
+_UNSUPPORTED_DOMAIN_KEYWORDS = (
+    "geometry",
+    "dynamical systems",
+    "symplectic",
+    "machine learning",
+    "ml",
+    "nlp",
+    "llm",
+    "language model",
+    "cryptography",
+    "data science",
+    "artificial intelligence",
+    "agentic ai",
+)
+
+_SUPPORTED_AGENT_ORDER = ("ChrisAgent", "AlainAgent")
+
 
 def build_julius_agent() -> Agent:
-    """Create JuliusAgent for phase 4."""
+    """Create JuliusAgent for phase 6."""
     chris_tool = build_chris_agent().as_tool(
         tool_name="chris_agent_tool",
         tool_description=(
             "Probability/statistics specialist. Use it for requests related to probability and statistics, "
             "topic extraction and description, and representative-paper main results."
+        ),
+        max_turns=6,
+    )
+    alain_tool = build_alain_agent().as_tool(
+        tool_name="alain_agent_tool",
+        tool_description=(
+            "Algebra specialist. Use it for requests related to algebraic geometry, rings and algebras, "
+            "group theory, topic extraction and description, and representative-paper main results."
         ),
         max_turns=6,
     )
@@ -117,7 +180,10 @@ def build_julius_agent() -> Agent:
     instructions = (
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
+        "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating.\n"
         "Use `chris_agent_tool` to delegate probability/statistics work and collect topic titles, descriptions, "
+        "representative papers, and main results when needed.\n"
+        "Use `alain_agent_tool` to delegate algebra work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
         "Use `michel_agent_tool` to get feedbacks about improvement to address non advanced experts by vulgarizing, providing intuitions and metaphors."
         "examples, metaphors, or simpler phrasing.\n"
@@ -129,7 +195,10 @@ def build_julius_agent() -> Agent:
         "Always restate the execution plan briefly before the final one-pager.\n"
         "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, an appealing title, the target audience and the tone to use.\n"
         "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent feedback, the tone and targeted audience.\n"
+        "When calling `allocate_topics_tool`, pass the full user request so the allocation can reflect the domain mix and requested number of topics.\n"
         "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
+        "and whether main results are required.\n"
+        "When delegating to AlainAgent, include the date range, inferred categories, topic count, audience, tone, "
         "and whether main results are required.\n"
         "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
         "If you delegated to MichelAgent, you must use `finalize_editorial_one_pager_tool` to finalize the one-pager with MichelAgent's feedbacks\n"
@@ -144,7 +213,9 @@ def build_julius_agent() -> Agent:
         instructions=instructions,
         tools=[
             extract_date_range_tool,
+            allocate_topics_tool,
             chris_tool,
+            alain_tool,
             michel_tool,
             editorial_one_pager_tool,
             finalize_editorial_one_pager_tool,
@@ -161,7 +232,7 @@ def run_julius_agent(
     """Run one JuliusAgent turn with SDK tracing enabled."""
     history = list(conversation_history or [])
     with trace(
-        "phase5-julius-agent-run",
+        "phase6-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
             "has_history": 'True' if bool(history) else 'False',
@@ -169,10 +240,10 @@ def run_julius_agent(
         disabled=os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "0") == "1",
     ):
         combined_context = _conversation_context(history, message)
-        if not _is_probability_or_statistics_request(combined_context):
+        if not _is_supported_specialist_request(combined_context):
             return {
                 "reply": (
-                    "I can only coordinate probability or statistics requests for now. "
+                    "I can only coordinate probability, statistics, or algebra requests for now. "
                     "Please reformulate the request around those domains."
                 ),
                 "tool_parameters": [],
@@ -210,25 +281,33 @@ def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> s
     return "\n".join(lines) if lines else "No previous conversation."
 
 
-def _is_probability_or_statistics_request(text: str) -> bool:
-    """Return True when the request stays within JuliusAgent's current scope."""
+def _is_supported_specialist_request(text: str) -> bool:
+    """Return True when Julius can route the request to its current specialists."""
     normalized = text.casefold()
     if any(keyword in normalized for keyword in _SUPPORTED_PR_ST_KEYWORDS):
         return True
-    return _is_probability_or_statistics_request_with_llm(text)
+    if any(keyword in normalized for keyword in _SUPPORTED_ALGEBRA_KEYWORDS):
+        return True
+    if any(keyword in normalized for keyword in _GENERIC_RESEARCH_KEYWORDS):
+        return _is_supported_specialist_request_with_llm(text)
+    return _is_supported_specialist_request_with_llm(text)
 
 
-def _is_probability_or_statistics_request_with_llm(text: str) -> bool:
-    """Use a tiny LLM fallback when the keyword check is inconclusive."""
+def _is_supported_specialist_request_with_llm(text: str) -> bool:
+    """Use an LLM fallback to decide whether Julius can serve the request."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return False
+        normalized = text.casefold()
+        return any(keyword in normalized for keyword in _GENERIC_RESEARCH_KEYWORDS) and not any(
+            keyword in normalized for keyword in _UNSUPPORTED_DOMAIN_KEYWORDS
+        )
 
     client = OpenAI(api_key=api_key)
     model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     prompt = (
-        "Decide whether the user text is about probability or statistics, including "
-        "implicit or closely related requests.\n"
+        "Decide whether the user text can be handled by the currently available specialists, including implicit or closely related requests.\n"
+        "Supported domains: probability, statistics, algebra.\n"
+        "Also answer YES for a general arXiv topic-summary request when no other domain is specified.\n"
         "Return exactly YES or NO.\n"
         f"Text: {text}"
     )
@@ -243,6 +322,133 @@ def _is_probability_or_statistics_request_with_llm(text: str) -> bool:
 
     content = (response.output_text or "").strip().casefold()
     return content == "yes"
+
+
+@function_tool(name_override="allocate_topics_tool")
+def allocate_topics_tool(
+    message: str,
+    available_agents: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Allocate the requested number of topics across JuliusAgent's specialists."""
+    agent_order = [agent for agent in (available_agents or list(_SUPPORTED_AGENT_ORDER)) if agent in _SUPPORTED_AGENT_ORDER]
+    if not agent_order:
+        agent_order = list(_SUPPORTED_AGENT_ORDER)
+
+    payload = _allocate_topics_with_llm(message, agent_order)
+    allocations = _normalize_allocation_payload(payload, agent_order)
+    requested_topic_count = payload.get("requested_topic_count")
+    if not isinstance(requested_topic_count, int):
+        requested_topic_count = sum(item["topic_count"] for item in allocations)
+    if requested_topic_count <= 0:
+        requested_topic_count = DEFAULT_MAX_TOPICS
+
+    return {
+        "status": "success",
+        "requested_topic_count": requested_topic_count,
+        "allocations": allocations,
+        "selection_reason": str(payload.get("selection_reason") or "").strip(),
+        "fallback_order": list(agent_order),
+    }
+
+
+def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str, Any]:
+    """Use an LLM to decide which specialists to call and how many topics each should cover."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for allocate_topics_tool")
+
+    agent_descriptions = {
+        "ChrisAgent": "probability and statistics specialist",
+        "AlainAgent": "algebra specialist",
+    }
+    available_agents = [
+        {
+            "agent_name": agent_name,
+            "specialty": agent_descriptions.get(agent_name, "specialized mathematics agent"),
+        }
+        for agent_name in agent_order
+    ]
+    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    prompt = (
+        "You are JuliusAgent's planning assistant.\n"
+        "Your job is to decide which specialized agents to call and how many topics to request from each.\n"
+        "Use only the available agents.\n"
+        "The total requested topics must stay between 1 and 5.\n"
+        "If the user names a supported domain explicitly, prefer the matching agent.\n"
+        "If the user does not specify a supported domain, you may spread the topics across the available agents.\n"
+        "Return JSON only with this schema:\n"
+        "{"
+        "\"requested_topic_count\": <int>, "
+        "\"selection_reason\": <string>, "
+        "\"allocations\": ["
+        "{\"agent_name\": <string>, \"topic_count\": <int>, \"reason\": <string>}"
+        "]"
+        "}.\n"
+        f"Available agents: {json.dumps(available_agents, ensure_ascii=False)}\n"
+        f"User request: {message}"
+    )
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=prompt,
+        temperature=0,
+    )
+    content = (response.output_text or "").strip()
+    if not content:
+        raise RuntimeError("allocate_topics_tool returned an empty response")
+    return _parse_json_object_response(content, "allocate_topics_tool")
+
+
+def _normalize_allocation_payload(payload: Dict[str, Any], agent_order: List[str]) -> List[Dict[str, Any]]:
+    """Normalize LLM allocation output into JuliusAgent's expected tool payload."""
+    raw_allocations = payload.get("allocations") or []
+    if not isinstance(raw_allocations, list):
+        raise RuntimeError("allocate_topics_tool must return a list of allocations")
+
+    normalized_allocations: List[Dict[str, Any]] = []
+    seen_agents: set[str] = set()
+    for item in raw_allocations:
+        if not isinstance(item, dict):
+            continue
+        agent_name = str(item.get("agent_name") or "").strip()
+        if agent_name not in agent_order or agent_name in seen_agents:
+            continue
+        topic_count = item.get("topic_count")
+        if not isinstance(topic_count, int):
+            continue
+        topic_count = max(1, min(topic_count, DEFAULT_MAX_TOPICS))
+        normalized_allocations.append(
+            {
+                "agent_name": agent_name,
+                "tool_name": _agent_tool_name(agent_name),
+                "topic_count": topic_count,
+                "reason": str(item.get("reason") or _allocation_reason(agent_name)).strip(),
+            }
+        )
+        seen_agents.add(agent_name)
+
+    if not normalized_allocations:
+        raise RuntimeError("allocate_topics_tool did not return usable allocations")
+    return normalized_allocations
+
+
+def _agent_tool_name(agent_name: str) -> str:
+    """Return the JuliusAgent tool name associated with a specialist."""
+    mapping = {
+        "ChrisAgent": "chris_agent_tool",
+        "AlainAgent": "alain_agent_tool",
+    }
+    return mapping[agent_name]
+
+
+def _allocation_reason(agent_name: str) -> str:
+    """Explain why a specialist received topic allocation. Default reason if a proper reason cannot be found"""
+    if agent_name == "ChrisAgent":
+        return "Interest in probability or statistics detected."
+    if agent_name == "AlainAgent":
+        return "Interest in algebra detected."
+    return "Allocated by JuliusAgent."
 
 @function_tool(name_override="editorial_one_pager_tool")
 def editorial_one_pager_tool(
@@ -291,23 +497,16 @@ def editorial_one_pager_tool(
     content = (response.output_text or "").strip()
     if not content:
         raise RuntimeError("editorial_one_pager_tool returned an empty response")
-    # try:
-    #     result = json.loads(content)
-    # except json.JSONDecodeError as exc:
-    #      result = _parse_json_object_response(content, "editorial_one_pager_tool")
-    #      raise RuntimeError(f"editorial_one_pager_tool did not return valid JSON. Got {content} AND COULD GET {result}") from exc
-    # if not isinstance(result, dict):
-    #     raise RuntimeError("editorial_one_pager_tool must return a JSON object")
     
     result = _parse_json_object_response(content, "editorial_one_pager_tool")
 
     result.setdefault("status", "compiled")
     result.setdefault("title", title)
-    # result.setdefault("selected_topics", [])
-    # result.setdefault("omitted_topics", [])
+    result.setdefault("selected_topics", [])
+    result.setdefault("omitted_topics", [])
     result.setdefault("editorial_summary", {})
     result.setdefault("content", "")
-    # result["topic_count"] = len(result.get("selected_topics") or [])
+    result.setdefault("topic_count", len(result.get("selected_topics") or []))
     return result
 
 

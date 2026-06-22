@@ -1,4 +1,4 @@
-"""Unit tests for Phase 4 JuliusAgent helpers."""
+"""Unit tests for Phase 6 JuliusAgent helpers."""
 
 from __future__ import annotations
 
@@ -61,6 +61,19 @@ def test_is_probability_or_statistics_request_uses_llm_fallback(monkeypatch):
     assert captured["model"] == "test-model"
     assert captured["temperature"] == 0
     assert "YES or NO" in str(captured["input"])
+
+
+def test_is_supported_specialist_request_accepts_algebra_queries():
+    assert phase4._is_supported_specialist_request(
+        "Summarize recent algebraic geometry and group theory papers."
+    )
+
+
+def test_is_supported_specialist_request_rejects_unsupported_queries_without_api_key(monkeypatch):
+    monkeypatch.setattr(phase4.os, "getenv", lambda key, default=None: None if key == "OPENAI_API_KEY" else default)
+    assert not phase4._is_supported_specialist_request(
+        "Summarize recent geometry papers."
+    )
 
 
 def test_extract_date_range_tool_wraps_helper(monkeypatch):
@@ -244,8 +257,8 @@ def test_revise_one_pager_tool_uses_llm(monkeypatch):
 
 
 def test_run_julius_agent_declines_out_of_scope_request():
-    result = phase4.run_julius_agent("Cover recent algebra papers.")
-    assert "only coordinate probability or statistics" in result["reply"]
+    result = phase4.run_julius_agent("Cover recent geometry papers.")
+    assert "only coordinate probability, statistics, or algebra" in result["reply"]
     assert result["tool_parameters"] == []
 
 
@@ -267,15 +280,15 @@ def test_run_julius_agent_traces_out_of_scope_request(monkeypatch):
         return FakeTrace()
 
     monkeypatch.setattr(phase4, "trace", fake_trace)
-    monkeypatch.setattr(phase4, "_is_probability_or_statistics_request", lambda _text: False)
+    monkeypatch.setattr(phase4, "_is_supported_specialist_request", lambda _text: False)
 
-    result = phase4.run_julius_agent("Cover recent algebra papers.")
+    result = phase4.run_julius_agent("Cover recent geometry papers.")
 
-    assert "only coordinate probability or statistics" in result["reply"]
+    assert "only coordinate probability, statistics, or algebra" in result["reply"]
     assert result["tool_parameters"] == []
     assert captured["entered"] is True
     assert captured["exited"] is True
-    assert captured["name"] == "phase5-julius-agent-run"
+    assert captured["name"] == "phase6-julius-agent-run"
     assert captured["metadata"] == {"agent": "JuliusAgent", "has_history": "False"}
 
 
@@ -321,6 +334,32 @@ def test_run_julius_agent_uses_runner_and_returns_tool_parameters(monkeypatch):
     assert captured["input"] == "Give me two topics on Markov chains."
 
 
+def test_run_julius_agent_accepts_algebra_request(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResult:
+        final_output = "Final algebra one-pager"
+        new_items = []
+
+    def fake_runner(agent, input, max_turns):
+        captured["agent_name"] = agent.name
+        captured["input"] = input
+        captured["max_turns"] = max_turns
+        return FakeResult()
+
+    monkeypatch.setattr(phase4, "build_julius_agent", lambda: type("A", (), {"name": "JuliusAgent"})())
+    monkeypatch.setattr(phase4.Runner, "run_sync", fake_runner)
+    monkeypatch.setattr(phase4, "trace", lambda *args, **kwargs: nullcontext())
+
+    result = phase4.run_julius_agent("Give me two topics on algebraic geometry papers.")
+
+    assert result["reply"] == "Final algebra one-pager"
+    assert result["tool_parameters"] == []
+    assert captured["agent_name"] == "JuliusAgent"
+    assert captured["input"] == "Give me two topics on algebraic geometry papers."
+    assert captured["max_turns"] == phase4.DEFAULT_MAX_TURNS
+
+
 def test_build_julius_agent_registers_michel_tool(monkeypatch):
     captured: dict[str, object] = {}
 
@@ -340,6 +379,7 @@ def test_build_julius_agent_registers_michel_tool(monkeypatch):
             captured.update(kwargs)
 
     monkeypatch.setattr(phase4, "build_chris_agent", lambda: FakeSpecialist("chris"))
+    monkeypatch.setattr(phase4, "build_alain_agent", lambda: FakeSpecialist("alain"))
     monkeypatch.setattr(phase4, "build_michel_agent", lambda: FakeSpecialist("michel"))
     monkeypatch.setattr(phase4, "Agent", FakeAgent)
 
@@ -347,8 +387,11 @@ def test_build_julius_agent_registers_michel_tool(monkeypatch):
 
     tool_names = [tool["tool_name"] for tool in captured["tools"] if isinstance(tool, dict)]
     sdk_tool_names = [getattr(tool, "name", None) for tool in captured["tools"]]
+    assert "allocate_topics_tool" in sdk_tool_names
     assert "chris_agent_tool" in tool_names
+    assert "alain_agent_tool" in tool_names
     assert "michel_agent_tool" in tool_names
     assert "finalize_editorial_one_pager_tool" in sdk_tool_names
     assert "revise_one_pager_tool" in sdk_tool_names
+    assert "AlainAgent" in captured["instructions"]
     assert "MichelAgent" in captured["instructions"]
