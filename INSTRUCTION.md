@@ -87,7 +87,15 @@ get topics of papers from 2026-05-19 to 2026-05-21
 get topics of papers from 2026-05-19 to 2026-05-21 and explain the main results for the representative papers
 provide the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, get one representative paper and describe the main results. 
 
-
+**test 1**
 I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described.
 
+I want to get two main topics in probability and one in algebra from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post.  -> OK
 
+**test 2**
+I want to get three main topics from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a post on a mathematic specialized blog for graduate students.
+
+I want to get four main topics from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post. -> OK
+
+**test 3**
+I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post.

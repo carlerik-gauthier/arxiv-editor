@@ -251,7 +251,7 @@ def run_julius_agent(
 
         # enriched_message = _enrich_message_for_michel(message, history)
         agent = build_julius_agent()
-        result = Runner.run_sync(agent, message, max_turns=DEFAULT_MAX_TURNS)
+        result = Runner.run_sync(agent, combined_context, max_turns=DEFAULT_MAX_TURNS)
 
     return {
         "reply": str(getattr(result, "final_output", "")),
@@ -266,7 +266,7 @@ def _conversation_context(
     history_text = _serialize_conversation(conversation_history)
     if not history_text:
         return message
-    return f"{history_text}\nuser: {message}"
+    return f"Past messages: {history_text}\nNew user message: {message}"
 
 
 def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> str:
@@ -376,6 +376,8 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
         "The total requested topics must stay between 1 and 5.\n"
         "If the user names a supported domain explicitly, prefer the matching agent.\n"
         "If the user does not specify a supported domain, you may spread the topics across the available agents.\n"
+        "The total number of topics you allocate must be greater or equal to the total number of topics required by the user.\n"
+        "If you cannot find out the total number of topics required by the user, assume it is 5."
         "Return JSON only with this schema:\n"
         "{"
         "\"requested_topic_count\": <int>, "
@@ -453,6 +455,7 @@ def _allocation_reason(agent_name: str) -> str:
 @function_tool(name_override="editorial_one_pager_tool")
 def editorial_one_pager_tool(
     specialized_agent_input: str,
+    requested_topic_count: int,
     title: str="ArXiv Research Brief",
     audience: str = "LinkedIn",
     tone: str = "professional",
@@ -478,6 +481,8 @@ def editorial_one_pager_tool(
         "editorial_summary, content.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
+        f"You must return **exactly** {min(requested_topic_count, 5)} topics.\n"
+        f"If you get less than {requested_topic_count} topics, return all of them\n"
         f"Target Audience is {audience} and the one-pager tone is expected to be {tone}\n"
         f"The title is {title}\n"
         f"Specialist handoff JSON:\n{json.dumps(payload, ensure_ascii=False, default=str, indent=2)}"
