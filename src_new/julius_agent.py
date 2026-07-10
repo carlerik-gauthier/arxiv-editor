@@ -266,7 +266,8 @@ def _conversation_context(
     history_text = _serialize_conversation(conversation_history)
     if not history_text:
         return message
-    return f"Past messages: {history_text}\nNew user message: {message}"
+    return f"{history_text}\n {message}"
+ # f"Past messages: {history_text}\nNew user message: {message}"
 
 
 def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> str:
@@ -274,10 +275,12 @@ def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> s
     lines: List[str] = []
     for item in conversation_history:
         role = str(item.get("role", "user")).strip() or "user"
+        if role != 'user':
+            continue
         content = str(item.get("content", "")).strip()
         if not content:
             continue
-        lines.append(f"{role}: {content}")
+        lines.append(f"{content}")
     return "\n".join(lines) if lines else "No previous conversation."
 
 
