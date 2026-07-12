@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional
 from agents import Agent, Runner, function_tool, trace
 from openai import OpenAI
 
-from src_new.arxiv_fetcher import ArxivFetcher
-from src_new.data_object import Paper
-from src_new.topic_finder import compute_topics
+from src.arxiv_fetcher import ArxivFetcher
+from src.data_object import Paper
+from src.topic_finder import compute_topics
 
 
 ALAIN_SYSTEM_PROMPT = "Algebraic structures specialist. You identify key concepts and explain them with enthusiasm"

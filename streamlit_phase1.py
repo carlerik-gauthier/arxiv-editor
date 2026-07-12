@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src_new.chris_agent_phase1 import run_chris_agent
+from src.chris_agent_phase1 import run_chris_agent
 
 
 def _init_state() -> None:

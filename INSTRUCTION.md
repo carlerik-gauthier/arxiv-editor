@@ -48,7 +48,7 @@
     - metaphor_tool: use it to provide metaphors that are easier to understand when explaining concepts
 - Add `MichelAgent` as a tool from `JuliusAgent`
     - `JuliusAgent` calls `MichelAgent` when vulgarization is needed for a general audience. `JuliusAgent` calls `MichelAgent` as long as the result is not satisfactory  
-## Phase 6: Create a second specialized agent
+## Phase 6: Create a second specialized agent ✅
 - Create the following remaining specialized agent
     - `AlainAgent` (in honor of Alain Valette) is a mathematician agent specialized in Algebra (math.AG, math.RA, math.GR). He communicates with passion
         - System prompt: Algebraic structures specialist
@@ -58,8 +58,7 @@
 - Add a new tool to `JuliusAgent` to allocate the number of topics per specialized agents based on user requests
 ## Phase 7: Review, Refactor, Unit test
 - Review the code by removing useless line of codes.
-- The code must be easy to maintain for future development
-- Refactor the code whereever it is needed to prevent code duplication
+- Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
 - generate the unit tests
 ## Phase 8 : Add the remaining specialized agents
 - Create the following remaining specialized agent
@@ -86,8 +85,7 @@
     - `JeanBaptisteAgent`: TODO
 ## Phase 10: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
-- The code must be easy to maintain for future development
-- Refactor the code whereever it is needed to prevent code duplication
+- Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
 - generate the unit tests
 - Document all functions
 - Provide a documentation about the workflow and add a schema about the agentic system
@@ -108,6 +106,7 @@ I want to get three main topics from 2026-05-25 to 2026-05-29. For every topic, 
 I want to get four main topics from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post. -> OK
 
 **test 3**
-I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post.
+I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post. 
 
 follow-up: extend the time window by one week earlier
+-> OK

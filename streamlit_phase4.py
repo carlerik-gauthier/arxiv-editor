@@ -7,7 +7,7 @@ import warnings
 
 import streamlit as st
 
-from src_new.julius_agent import run_julius_agent
+from src.julius_agent import run_julius_agent
 
 
 class _TransformersPathAliasFilter(logging.Filter):

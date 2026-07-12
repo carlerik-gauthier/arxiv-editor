@@ -7,7 +7,7 @@ import warnings
 
 import streamlit as st
 
-from src_new.chris_agent import run_chris_agent
+from src.chris_agent import run_chris_agent
 
 
 class _TransformersPathAliasFilter(logging.Filter):

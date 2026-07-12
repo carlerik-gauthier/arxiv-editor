@@ -5,7 +5,7 @@ import pandas as pd
 from copy import deepcopy
 from dotenv import load_dotenv
 from typing import List
-from src_new.data_object import Paper
+from src.data_object import Paper
 
 load_dotenv(override=True)
 

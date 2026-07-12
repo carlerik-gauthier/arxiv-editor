@@ -12,9 +12,9 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from agents import Agent, Runner, function_tool, trace
 
-from src_new.alain_agent import build_alain_agent
-from src_new.chris_agent import build_chris_agent
-from src_new.michel_agent import build_michel_agent
+from src.alain_agent import build_alain_agent
+from src.chris_agent import build_chris_agent
+from src.michel_agent import build_michel_agent
 
 logger = logging.getLogger(__name__)
 
