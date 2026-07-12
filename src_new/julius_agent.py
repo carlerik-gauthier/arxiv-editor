@@ -275,12 +275,10 @@ def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> s
     lines: List[str] = []
     for item in conversation_history:
         role = str(item.get("role", "user")).strip() or "user"
-        if role != 'user':
-            continue
         content = str(item.get("content", "")).strip()
         if not content:
             continue
-        lines.append(f"{content}")
+        lines.append(f"{role}: {content}")
     return "\n".join(lines) if lines else "No previous conversation."
 
 
@@ -308,8 +306,11 @@ def _is_supported_specialist_request_with_llm(text: str) -> bool:
     client = OpenAI(api_key=api_key)
     model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     prompt = (
-        "Decide whether the user text can be handled by the currently available specialists, including implicit or closely related requests.\n"
+        "Decide whether the user text is linked to one of the supported domains, including closely related requests.\n"
+        "Help yourself by using the lexicons related to the supported domains.\n"
         "Supported domains: probability, statistics, algebra.\n"
+        f"Lexicon related to the probability and statisfics domain is: {', '.join(_SUPPORTED_PR_ST_KEYWORDS)}.\n"
+        f"Lexicon related to the algebra domain is: {', '.join(_SUPPORTED_ALGEBRA_KEYWORDS)}.\n"
         "Also answer YES for a general arXiv topic-summary request when no other domain is specified.\n"
         "Return exactly YES or NO.\n"
         f"Text: {text}"
@@ -361,27 +362,31 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
         raise RuntimeError("OPENAI_API_KEY is required for allocate_topics_tool")
 
     agent_descriptions = {
-        "ChrisAgent": "probability and statistics specialist",
-        "AlainAgent": "algebra specialist",
+        "ChrisAgent": "Probability and statistics specialist. He is the agent to call only when probability or statistics related topics are needed!",
+        "AlainAgent": "Algebra specialist. He is the agent to call only when algebra related topics are needed!",
     }
     available_agents = [
         {
             "agent_name": agent_name,
-            "specialty": agent_descriptions.get(agent_name, "specialized mathematics agent"),
+            "specialty": agent_descriptions.get(agent_name, "not implemented agent"),
         }
         for agent_name in agent_order
     ]
     model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     prompt = (
         "You are JuliusAgent's planning assistant.\n"
-        "Your job is to decide which specialized agents to call and how many topics to request from each.\n"
+        "Your job is to decide which specialized agents to call and how many topics to request from each from the user request.\n"
         "Use only the available agents.\n"
         "The total requested topics must stay between 1 and 5.\n"
-        "If the user names a supported domain explicitly, prefer the matching agent.\n"
-        "If the user does not specify a supported domain, you may spread the topics across the available agents.\n"
-        "The total number of topics you allocate must be greater or equal to the total number of topics required by the user.\n"
-        "If you cannot find out the total number of topics required by the user, assume it is 5."
-        "Return JSON only with this schema:\n"
+        "**ANALYZE CAREFULLY** the user request to determine the agent allocation based on the available agents. Follow the following principle:\n"
+        "- If the user names a supported domain explicitly, pick the matching agent.\n"
+        "- If the user request closely related to supported domains, pick the matching agents.\n"
+        "- If you cannot infer which agents to select, you may spread the topics across the available agents.\n"
+        "- If the user provides an allocation, you must meet the given allocation. In particular you are prohibited to allocate less.\n"
+        "- The total number of topics you allocate must be greater or equal to the total number of topics required by the user.\n"
+        "- If you can infer the total number of topics requested by the user, you must be satisfy that number.\n"
+        "- If you cannot find out the total number of topics requested by the user, assume it is 5."
+        "- Return JSON only with this schema:\n"
         "{"
         "\"requested_topic_count\": <int>, "
         "\"selection_reason\": <string>, "

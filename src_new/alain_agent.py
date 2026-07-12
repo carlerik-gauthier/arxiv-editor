@@ -545,7 +545,7 @@ def _extract_main_result_with_llm(arxiv_id: str, title: str, content: str) -> st
         f"Paper title: {title}\n"
         "You are an algebra expert.\n"
         "From the paper content below, extract the main theorem or main result and explain in 1-3 concise bullet points why it matters.\n"
-        "Be precise and you must not make speculation.\n\n"
+        "Be precise and you must not make any speculation.\n\n"
         f"Paper content:\n{content}"
     )
     response = client.responses.create(model=model, input=prompt, temperature=0.1)

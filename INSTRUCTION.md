@@ -61,7 +61,7 @@
 - The code must be easy to maintain for future development
 - Refactor the code whereever it is needed to prevent code duplication
 - generate the unit tests
-## Phase 8 : Add the remaining specialized agetns
+## Phase 8 : Add the remaining specialized agents
 - Create the following remaining specialized agent
     - `BrunoAgent` is a mathematician agent specialized in Spectral/Riemannian Geometry (math.DG, math.SP). He is extremely rigorous when communicating.
         - System prompt: Geometry expert, emphasizes geometric intuition
@@ -74,7 +74,17 @@
     - `JeanBaptisteAgent` is a Data Scientist agent specialized in Data Science/NLP/LLM/Agentic AI (cs.CL, cs.AI, cs.MA, cs.CE). He is very experience in deploying model in production and has a concise communication style
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
 - add an helper between the 2 main families of fields : mathematics (probability, statistics, cryptography, applied mathematics, algebra, geometry, dynamical system), and AI (data science, Machine Learning, Generative AI, NLP, LLM)
-## Phase 9: Review, Refactor, Unit test and Document
+## Phase 9: Add personality
+- Update prompts to make sure answer reflects agents' personalities
+    - `ChrisAgent`: TODO
+    - `MichelAgent`: TODO
+    - `AlainAgent`: TODO
+    - `BrunoAgent`: TODO
+    - `ElisaAgent`: TODO
+    - `FelixAgent`: TODO
+    - `AbdoulayeAgent`: TODO
+    - `JeanBaptisteAgent`: TODO
+## Phase 10: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
 - The code must be easy to maintain for future development
 - Refactor the code whereever it is needed to prevent code duplication
@@ -100,5 +110,4 @@ I want to get four main topics from 2026-05-25 to 2026-05-29. For every topic, I
 **test 3**
 I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post.
 
-
-qllocq to be reveiwed
+follow-up: extend the time window by one week earlier
