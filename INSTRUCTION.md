@@ -87,7 +87,7 @@
 - Review the code by removing useless line of codes.
 - Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
 - generate the unit tests
-- Document all functions
+- Document all functions with docstrings and typing
 - Provide a documentation about the workflow and add a schema about the agentic system
 
 
