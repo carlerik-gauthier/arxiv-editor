@@ -5,7 +5,12 @@ from pathlib import Path
 
 from src import specialist_agent
 from src.alain_agent import ALAIN_CATEGORIES, CONFIG as ALAIN_CONFIG, build_alain_agent
+from src.abdoulaye_agent import ABDOULAYE_CATEGORIES, build_abdoulaye_agent
+from src.bruno_agent import BRUNO_CATEGORIES, build_bruno_agent
 from src.chris_agent import CHRIS_CATEGORIES, CONFIG as CHRIS_CONFIG, build_chris_agent
+from src.elisa_agent import ELISA_CATEGORIES, build_elisa_agent
+from src.felix_agent import FELIX_CATEGORIES, build_felix_agent
+from src.jean_baptiste_agent import JEAN_BAPTISTE_CATEGORIES, build_jean_baptiste_agent
 from src.data_object import Paper
 
 
@@ -134,3 +139,20 @@ def test_specialist_prompt_instructs_the_full_tool_workflow():
         assert tool_name in instructions
     assert "before fetching" in instructions
     assert "too few papers" in instructions
+
+
+def test_phase_eight_specialists_register_shared_tools_and_categories():
+    agents_and_categories = (
+        (build_bruno_agent, BRUNO_CATEGORIES),
+        (build_elisa_agent, ELISA_CATEGORIES),
+        (build_felix_agent, FELIX_CATEGORIES),
+        (build_abdoulaye_agent, ABDOULAYE_CATEGORIES),
+        (build_jean_baptiste_agent, JEAN_BAPTISTE_CATEGORIES),
+    )
+    expected_tools = {"get_arxiv_categories_tool", "check_paper_tool", "arxiv_fetcher_tool", "find_topic_tool", "extract_main_result_tool"}
+
+    for builder, categories in agents_and_categories:
+        agent = builder()
+        assert {tool.name for tool in agent.tools} == expected_tools
+        assert agent.name in agent.instructions
+        assert all(category in agent.instructions for category in categories)

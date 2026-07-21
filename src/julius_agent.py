@@ -12,8 +12,14 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from agents import Agent, Runner, function_tool, trace
 
+from src.abdoulaye_agent import build_abdoulaye_agent
 from src.alain_agent import build_alain_agent
+from src.bruno_agent import build_bruno_agent
 from src.chris_agent import build_chris_agent
+from src.elisa_agent import build_elisa_agent
+from src.felix_agent import build_felix_agent
+from src.field_family import family_for_agent
+from src.jean_baptiste_agent import build_jean_baptiste_agent
 from src.michel_agent import build_michel_agent
 
 logger = logging.getLogger(__name__)
@@ -48,7 +54,9 @@ JULIUS_SYSTEM_PROMPT = (
     "- Parse the user request, including date range, topics, and preferences.\n"
     "- Create a concise execution plan before writing the final one-pager.\n"
     "- You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent.\n"
-    "- Use ChrisAgent for probability/statistics content and AlainAgent for algebra related content.\n"
+    "- Route mathematics requests to ChrisAgent (probability/statistics), AlainAgent (algebra), BrunoAgent "
+    "(geometry), ElisaAgent (applied mathematics/cryptography), or FelixAgent (dynamical systems/symplectic geometry).\n"
+    "- Route AI requests to AbdoulayeAgent (machine learning) or JeanBaptisteAgent (data science, NLP, LLMs, and agentic AI).\n"
     "- Delegate clarity, intuition, and metaphor work to MichelAgent when the audience is general or when the user asks for simpler explanations.\n"
     "- When you call ChrisAgent or AlainAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
@@ -114,6 +122,26 @@ _SUPPORTED_ALGEBRA_KEYWORDS = (
     "math.at"
 )
 
+_SUPPORTED_GEOMETRY_KEYWORDS = (
+    "geometry", "riemannian", "spectral", "manifold", "curvature", "math.dg", "math.sp"
+)
+
+_SUPPORTED_APPLIED_MATH_KEYWORDS = (
+    "cryptography", "cryptographic", "security", "optimization", "numerical analysis", "applied mathematics", "control", "math.oc", "cs.cr", "math.na"
+)
+_SUPPORTED_HAMILTONIAN_DYNAMIC_KEYWORDS = (
+    "dynamical systems", "dynamical", "symplectic", "hamiltonian", "chaos", "math.ds", "math.sg"
+)
+_SUPPORTED_DATA_SCIENCE_KEYWORDS = (
+    "data science", "machine learning", "deep learning", "ml", "learning algorithm", "cs.lg", "stat.ml"
+)
+
+
+_SUPPORTED_AGENTIC_AI_KEYWORDS = (
+    "natural language processing", "nlp", "large language model", "llm", "agentic ai",
+    "artificial intelligence", "multi-agent", "cs.cl", "cs.ai", "cs.ma", "cs.ce"
+)
+
 _GENERIC_RESEARCH_KEYWORDS = (
     "paper",
     "papers",
@@ -127,21 +155,16 @@ _GENERIC_RESEARCH_KEYWORDS = (
 )
 
 _UNSUPPORTED_DOMAIN_KEYWORDS = (
-    "geometry",
-    "dynamical systems",
-    "symplectic",
-    "machine learning",
-    "ml",
-    "nlp",
-    "llm",
-    "language model",
-    "cryptography",
-    "data science",
-    "artificial intelligence",
-    "agentic ai",
+    "astrophysics",
+    "quantum physics",
+    "economics",
+    "biology",
 )
 
-_SUPPORTED_AGENT_ORDER = ("ChrisAgent", "AlainAgent")
+_SUPPORTED_AGENT_ORDER = (
+    "ChrisAgent", "AlainAgent", "BrunoAgent", "ElisaAgent", "FelixAgent",
+    "AbdoulayeAgent", "JeanBaptisteAgent",
+)
 
 
 def build_julius_agent() -> Agent:
@@ -162,6 +185,31 @@ def build_julius_agent() -> Agent:
         ),
         max_turns=6,
     )
+    bruno_tool = build_bruno_agent().as_tool(
+        tool_name="bruno_agent_tool",
+        tool_description="Spectral and Riemannian geometry specialist. Use for geometry, curvature, manifolds, or spectral theory.",
+        max_turns=6,
+    )
+    elisa_tool = build_elisa_agent().as_tool(
+        tool_name="elisa_agent_tool",
+        tool_description="Applied mathematics and cryptography specialist. Use for optimization, control, cryptography, or security.",
+        max_turns=6,
+    )
+    felix_tool = build_felix_agent().as_tool(
+        tool_name="felix_agent_tool",
+        tool_description="Dynamical systems and symplectic geometry specialist. Use for long-term behavior, chaos, Hamiltonian systems, or symplectic geometry.",
+        max_turns=6,
+    )
+    abdoulaye_tool = build_abdoulaye_agent().as_tool(
+        tool_name="abdoulaye_agent_tool",
+        tool_description="Machine-learning specialist. Use for ML algorithms, learning theory, and AI applications.",
+        max_turns=6,
+    )
+    jean_baptiste_tool = build_jean_baptiste_agent().as_tool(
+        tool_name="jean_baptiste_agent_tool",
+        tool_description="Data science, NLP, LLM, and agentic-AI specialist with production deployment expertise.",
+        max_turns=6,
+    )
     michel_tool = build_michel_agent().as_tool(
         tool_name="michel_agent_tool",
         tool_description=(
@@ -174,10 +222,16 @@ def build_julius_agent() -> Agent:
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
         "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating.\n"
+        "Use `get_field_family_tool` when planning spans mathematics and AI, so each allocation is routed to its correct family.\n"
         "Use `chris_agent_tool` to delegate probability/statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
         "Use `alain_agent_tool` to delegate algebra work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
+        "Use `bruno_agent_tool` for spectral or Riemannian geometry; use `elisa_agent_tool` for applied mathematics "
+        "or cryptography; and use `felix_agent_tool` for dynamical systems or symplectic geometry.\n"
+        "Use `abdoulaye_agent_tool` for machine learning and `jean_baptiste_agent_tool` for data science, NLP, "
+        "LLMs, or agentic AI. Each specialist delegation must include the date range, topic count, audience, tone, "
+        "and whether main results are required.\n"
         "Use `michel_agent_tool` to get feedbacks about improvement to address non advanced experts by vulgarizing, providing intuitions and metaphors."
         "examples, metaphors, or simpler phrasing.\n"
         "Use `editorial_one_pager_tool` to make the editorial work and build a first draft.\n"
@@ -206,9 +260,15 @@ def build_julius_agent() -> Agent:
         instructions=instructions,
         tools=[
             extract_date_range_tool,
+            get_field_family_tool,
             allocate_topics_tool,
             chris_tool,
             alain_tool,
+            bruno_tool,
+            elisa_tool,
+            felix_tool,
+            abdoulaye_tool,
+            jean_baptiste_tool,
             michel_tool,
             editorial_one_pager_tool,
             finalize_editorial_one_pager_tool,
@@ -236,8 +296,9 @@ def run_julius_agent(
         if not _is_supported_specialist_request(combined_context):
             return {
                 "reply": (
-                    "I can only coordinate probability, statistics, or algebra requests for now. "
-                    "Please reformulate the request around those domains."
+                    "I can coordinate mathematics and AI research briefs (including probability, algebra, geometry, "
+                    "cryptography, machine learning, data science, NLP, LLMs, and agentic AI). Please reformulate "
+                    "the request around those domains."
                 ),
                 "tool_parameters": [],
             }
@@ -282,6 +343,16 @@ def _is_supported_specialist_request(text: str) -> bool:
         return True
     if any(keyword in normalized for keyword in _SUPPORTED_ALGEBRA_KEYWORDS):
         return True
+    if any(keyword in normalized for keyword in _SUPPORTED_GEOMETRY_KEYWORDS):
+        return True
+    if any(keyword in normalized for keyword in _SUPPORTED_AGENTIC_AI_KEYWORDS):
+        return True
+    if any(keyword in normalized for keyword in _SUPPORTED_APPLIED_MATH_KEYWORDS):
+        return True
+    if any(keyword in normalized for keyword in _SUPPORTED_DATA_SCIENCE_KEYWORDS):
+        return True
+    if any(keyword in normalized for keyword in _SUPPORTED_HAMILTONIAN_DYNAMIC_KEYWORDS):
+        return True
     if any(keyword in normalized for keyword in _GENERIC_RESEARCH_KEYWORDS):
         return _is_supported_specialist_request_with_llm(text)
     return _is_supported_specialist_request_with_llm(text)
@@ -301,9 +372,15 @@ def _is_supported_specialist_request_with_llm(text: str) -> bool:
     prompt = (
         "Decide whether the user text is linked to one of the supported domains, including closely related requests.\n"
         "Help yourself by using the lexicons related to the supported domains.\n"
-        "Supported domains: probability, statistics, algebra.\n"
-        f"Lexicon related to the probability and statisfics domain is: {', '.join(_SUPPORTED_PR_ST_KEYWORDS)}.\n"
-        f"Lexicon related to the algebra domain is: {', '.join(_SUPPORTED_ALGEBRA_KEYWORDS)}.\n"
+        "Supported domains: probability, statistics, algebra, geometry, applied mathematics, cryptography, "
+        "dynamical systems, symplectic geometry, machine learning, data science, NLP, LLMs, and agentic AI.\n"
+        f"Lexicon related to the probability and statisfics speciality is: {', '.join(_SUPPORTED_PR_ST_KEYWORDS)}.\n"
+        f"Lexicon related to the algebra speciality is: {', '.join(_SUPPORTED_ALGEBRA_KEYWORDS)}.\n"
+        f"Lexicon related to the geometry speciality is: {', '.join(_SUPPORTED_GEOMETRY_KEYWORDS)}.\n"
+        f"Lexicon related to the applied mathematic and cyptography speciality is: {', '.join(_SUPPORTED_APPLIED_MATH_KEYWORDS)}.\n"
+        f"Lexicon related to the Hamiltonian dynamical system speciality is: {', '.join(_SUPPORTED_HAMILTONIAN_DYNAMIC_KEYWORDS)}.\n"
+        f"Lexicon related to the Data Science and Machine Learning speciality is: {', '.join(_SUPPORTED_DATA_SCIENCE_KEYWORDS)}.\n"
+        f"Lexicon related to the NLP and Agentic AI speciality is: {', '.join(_SUPPORTED_AGENTIC_AI_KEYWORDS)}.\n"
         "Also answer YES for a general arXiv topic-summary request when no other domain is specified.\n"
         "Return exactly YES or NO.\n"
         f"Text: {text}"
@@ -319,6 +396,12 @@ def _is_supported_specialist_request_with_llm(text: str) -> bool:
 
     content = (response.output_text or "").strip().casefold()
     return content == "yes"
+
+# note: test as-is, otherwise move that information in the allocation topic tool
+@function_tool(name_override="get_field_family_tool")
+def get_field_family_tool(agent_name: str) -> Dict[str, str]:
+    """Identify whether a specialist belongs to the mathematics or AI family."""
+    return {"agent_name": agent_name, "family": family_for_agent(agent_name).value}
 
 
 @function_tool(name_override="allocate_topics_tool")
@@ -357,6 +440,11 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
     agent_descriptions = {
         "ChrisAgent": "Probability and statistics specialist. He is the agent to call only when probability or statistics related topics are needed!",
         "AlainAgent": "Algebra specialist. He is the agent to call only when algebra related topics are needed!",
+        "BrunoAgent": "Spectral and Riemannian geometry specialist.",
+        "ElisaAgent": "Applied mathematics and cryptography specialist.",
+        "FelixAgent": "Dynamical systems and symplectic geometry specialist.",
+        "AbdoulayeAgent": "Machine-learning specialist, including learning algorithms and applications.",
+        "JeanBaptisteAgent": "Data science, NLP, LLM, and agentic-AI specialist.",
     }
     available_agents = [
         {
@@ -441,6 +529,11 @@ def _agent_tool_name(agent_name: str) -> str:
     mapping = {
         "ChrisAgent": "chris_agent_tool",
         "AlainAgent": "alain_agent_tool",
+        "BrunoAgent": "bruno_agent_tool",
+        "ElisaAgent": "elisa_agent_tool",
+        "FelixAgent": "felix_agent_tool",
+        "AbdoulayeAgent": "abdoulaye_agent_tool",
+        "JeanBaptisteAgent": "jean_baptiste_agent_tool",
     }
     return mapping[agent_name]
 
@@ -451,6 +544,16 @@ def _allocation_reason(agent_name: str) -> str:
         return "Interest in probability or statistics detected."
     if agent_name == "AlainAgent":
         return "Interest in algebra detected."
+    if agent_name == "BrunoAgent":
+        return "Interest in spectral or Riemannian geometry detected."
+    if agent_name == "ElisaAgent":
+        return "Interest in applied mathematics or cryptography detected."
+    if agent_name == "FelixAgent":
+        return "Interest in dynamical systems or symplectic geometry detected."
+    if agent_name == "AbdoulayeAgent":
+        return "Interest in data science or machine learning detected."
+    if agent_name == "JeanBaptisteAgent":
+        return "Interest in NLP, LLMs, or agentic AI detected."
     return "Allocated by JuliusAgent."
 
 @function_tool(name_override="editorial_one_pager_tool")

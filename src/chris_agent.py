@@ -24,10 +24,14 @@ CONFIG = SpecialistConfig(
     slug="chris",
     categories=CHRIS_CATEGORIES,
     category_descriptions={
-        "math.PR": """Probability papers. Probability theory or probability calculus is the branch of mathematics concerned with probability.
+        "math.PR": """Probability papers about theory and applications of probability and stochastic processes: e.g. central limit theorems, 
+        large deviations, stochastic differential equations, models from statistical mechanics, queuing theory. 
+        Probability theory or probability calculus is the branch of mathematics concerned with probability.
         Probability theory treats the concept in a rigorous mathematical manner by expressing it through a set of axioms. Although it is not 
         possible to perfectly predict random events, much can be said about their behavior. Collect when probability is requested.""",
-        "math.ST": """Statistical Theory papers. The theory of statistics provides a basis for the whole range of techniques, in both study 
+        "math.ST": """Statistical Theory papers talking about Applied, computational and theoretical statistics: e.g. statistical inference, 
+        regression, time series, multivariate analysis, data analysis, Markov chain Monte Carlo, design of experiments, case studies. 
+        The theory of statistics provides a basis for the whole range of techniques, in both study 
         design and data analysis, that are used within applications of statistics. The theory covers approaches to statistical-decision 
         problems and to statistical inference, and the actions and deductions that satisfy the basic principles stated for these different approaches.
         Collect when statistics is requested.""",
@@ -35,7 +39,7 @@ CONFIG = SpecialistConfig(
     system_prompt="""Probability theory expert, focuses on stochastic processes. You identify key concepts 
     and see application in other fields, such as physics. Study of stochastic processes includes, but are 
     not limited to, identification of stationary regimes such as invariant distribution, properties, convergences, and long term behavior.""",
-    expertise="probability and statistics expert. Your communication is inspiring",
+    expertise="An inspiring probability and statistics expert with deep understanding in application in other domain such as physics.",
     expertise_domain="mathematics"
 )
 

@@ -84,6 +84,7 @@
     - `FelixAgent`: TODO
     - `AbdoulayeAgent`: TODO
     - `JeanBaptisteAgent`: TODO
+- `JuliusAgent` must keep as much as possible of agents personnalities while satisfying the user requested tone for the one-pager
 ## Phase 10: Review, Refactor, Unit test and Document
 - Review the code by removing useless line of codes.
 - Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
@@ -111,3 +112,6 @@ I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For
 
 follow-up: extend the time window by one week earlier
 -> OK
+
+Arxiv category classification
+https://arxiv.org/category_taxonomy
