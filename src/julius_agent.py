@@ -222,14 +222,15 @@ def build_julius_agent() -> Agent:
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
         "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating.\n"
-        "Use `get_field_family_tool` when planning spans mathematics and AI, so each allocation is routed to its correct family.\n"
-        "Use `chris_agent_tool` to delegate probability/statistics work and collect topic titles, descriptions, "
+        "Use `get_field_family_tool` when planning spans mathematics and AI, so each allocation is routed to its correct expertise/field family.\n"
+        "For example, if the user request mathematics, only allocate anything to agents specialized in mathematics\n"
+        "Use `chris_agent_tool` to delegate probability or statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
         "Use `alain_agent_tool` to delegate algebra work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
-        "Use `bruno_agent_tool` for spectral or Riemannian geometry; use `elisa_agent_tool` for applied mathematics "
+        "Use `bruno_agent_tool` for spectral or Riemannian geometry; use `elisa_agent_tool` for applied mathematics (e.g. numerical analysis)"
         "or cryptography; and use `felix_agent_tool` for dynamical systems or symplectic geometry.\n"
-        "Use `abdoulaye_agent_tool` for machine learning and `jean_baptiste_agent_tool` for data science, NLP, "
+        "Use `abdoulaye_agent_tool` for data science or machine learning and `jean_baptiste_agent_tool` for NLP, "
         "LLMs, or agentic AI. Each specialist delegation must include the date range, topic count, audience, tone, "
         "and whether main results are required.\n"
         "Use `michel_agent_tool` to get feedbacks about improvement to address non advanced experts by vulgarizing, providing intuitions and metaphors."
@@ -285,7 +286,7 @@ def run_julius_agent(
     """Run one JuliusAgent turn with SDK tracing enabled."""
     history = list(conversation_history or [])
     with trace(
-        "phase7-julius-agent-run",
+        "phase8-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
             "has_history": 'True' if bool(history) else 'False',
@@ -397,7 +398,7 @@ def _is_supported_specialist_request_with_llm(text: str) -> bool:
     content = (response.output_text or "").strip().casefold()
     return content == "yes"
 
-# note: test as-is, otherwise move that information in the allocation topic tool
+# note: test as-is, otherwise update to assess if message is about math/ai OR move that information in the allocation topic tool
 @function_tool(name_override="get_field_family_tool")
 def get_field_family_tool(agent_name: str) -> Dict[str, str]:
     """Identify whether a specialist belongs to the mathematics or AI family."""
