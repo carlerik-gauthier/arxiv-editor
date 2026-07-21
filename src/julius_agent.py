@@ -48,7 +48,7 @@ JULIUS_SYSTEM_PROMPT = (
     "- Parse the user request, including date range, topics, and preferences.\n"
     "- Create a concise execution plan before writing the final one-pager.\n"
     "- You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent.\n"
-    "- Use ChrisAgent for probability/statistics content and AlainAgent for algebra content.\n"
+    "- Use ChrisAgent for probability/statistics content and AlainAgent for algebra related content.\n"
     "- Delegate clarity, intuition, and metaphor work to MichelAgent when the audience is general or when the user asks for simpler explanations.\n"
     "- When you call ChrisAgent or AlainAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
@@ -64,13 +64,6 @@ DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 20
 
-_NUMBER_WORDS = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-}
 
 _SUPPORTED_PR_ST_KEYWORDS = (
     "probability",
@@ -232,7 +225,7 @@ def run_julius_agent(
     """Run one JuliusAgent turn with SDK tracing enabled."""
     history = list(conversation_history or [])
     with trace(
-        "phase6-julius-agent-run",
+        "phase7-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
             "has_history": 'True' if bool(history) else 'False',

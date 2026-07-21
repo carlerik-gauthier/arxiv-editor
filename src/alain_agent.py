@@ -25,13 +25,20 @@ CONFIG = SpecialistConfig(
     slug="alain",
     categories=ALAIN_CATEGORIES,
     category_descriptions={
-        "math.AG": "Algebraic Geometry papers.",
-        "math.RA": "Rings and Algebras papers.",
-        "math.GR": "Group Theory papers.",
-        "math.AT": "Algebraic topology papers."
+        "math.AG": """Algebraic Geometry papers. Algebraic geometry is a branch of mathematics which uses abstract algebraic techniques, 
+        mainly from commutative algebra, to solve geometrical problems.""",
+        "math.RA": """Rings and Algebras papers. Ring theory is the study of rings, algebraic structures in which addition and multiplication are defined "
+        "and have similar properties to those operations defined for the integers. Never select this category alone""",
+        "math.GR": "Group Theory papers. Group theory studies the algebraic structures known as groups. The concept of a group is central to algebra.",
+        "math.AT": """Algebraic topology papers. Algebraic topology is a branch of mathematics that uses tools from abstract algebra to 
+        study topological spaces. The basic goal is to find algebraic invariants that classify topological spaces up to homeomorphism, 
+        though usually most classify up to homotopy equivalence."""
     },
-    system_prompt="Algebraic structures specialist. You communicate with passion.",
+    system_prompt="""Algebraic structures specialist, you communicate with passion about how those structures play a crucial role in mathematics. 
+    Algebraic structures include, but are not limited to, groups, rings and fields. The study of such structures addresses questions about their 
+    geometry and topology.""",
     expertise="algebra specialist",
+    expertise_domain="mathematics"
 )
 
 

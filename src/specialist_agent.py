@@ -46,6 +46,7 @@ class SpecialistConfig:
     category_descriptions: Mapping[str, str]
     system_prompt: str
     expertise: str
+    expertise_domain: str
 
 
 def check_papers(config: SpecialistConfig, start_date: str, end_date: str, categories: Sequence[str]) -> Dict[str, Any]:
@@ -155,7 +156,8 @@ def classify_categories(config: SpecialistConfig, message: str) -> List[str]:
         for category in config.categories
     )
     prompt = (
-        f"Classify the message into arXiv categories from this allowed set only: {list(config.categories)}.\n"
+        "Analyze carefully the message and list all relevant arXiv categories that fit with the message\n"
+        f"from this allowed set only: {list(config.categories)}.\n"
         f"Category descriptions:\n{category_definitions}\n"
         "Return JSON only: {\"categories\": [<category>]}\n"
         f"Message: {message}"

@@ -56,7 +56,7 @@
 - Add the second agent as tool for `JuliusAgent`
 - Update `JuliusAgent` system prompt by adding "You are responsible to allocate the number of topics to the different specialized agents. If an agent cannot return you requested, you pick another topic from another agent"
 - Add a new tool to `JuliusAgent` to allocate the number of topics per specialized agents based on user requests
-## Phase 7: Review, Refactor, Unit test
+## Phase 7: Review, Refactor, Unit test ✅
 - Review the code by removing useless line of codes.
 - Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
 - generate the unit tests
@@ -72,7 +72,8 @@
         - System prompt: ML researcher, explains algorithms and applications
     - `JeanBaptisteAgent` is a Data Scientist agent specialized in Data Science/NLP/LLM/Agentic AI (cs.CL, cs.AI, cs.MA, cs.CE). He is very experience in deploying model in production and has a concise communication style
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
-- add an helper between the 2 main families of fields : mathematics (probability, statistics, cryptography, applied mathematics, algebra, geometry, dynamical system), and AI (data science, Machine Learning, Generative AI, NLP, LLM)
+- add an helper between the 2 main families of fields : mathematics (probability, statistics, cryptography, applied mathematics, algebra, geometry, dynamical system), and AI (data science, Machine Learning, Generative AI, NLP, LLM, computer vision)
+- Update `JuliusAgent` with the ability to call the newly created agents
 ## Phase 9: Add personality
 - Update prompts to make sure answer reflects agents' personalities
     - `ChrisAgent`: TODO
