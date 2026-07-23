@@ -41,6 +41,14 @@ EXPECTED_FORMAT_OUTPUT_RULE = """
     Mandatory elements are <TOPIC TITLE>, <topic count>, <topic description> or <pedagogical explanation for topic description>, <paper title> and <paper arxiv_id>.
     <pedagogical explanation for reprensative main result> should be provided if MichelAgent is called.
     <pedagogical explanation for topic description> should be provided if MichelAgent is called. If necessary it can replace <topic description> 
+    **Description**
+    - <TOPIC TITLE> is an informative title describing the topic
+    - <topic count> is the number of papers the topic covers.
+    - <topic description> is a short description about the topic content
+    - <pedagogical explanation for topic description> is a topic simplified description to address a wide audience
+    - <paper title> is the paper title
+    - <paper arxiv_id> is the paper ID in ArXiv. It links to the online paper.
+
     They must be returned regardless of user request
 """
 
@@ -172,16 +180,14 @@ def build_julius_agent() -> Agent:
     chris_tool = build_chris_agent().as_tool(
         tool_name="chris_agent_tool",
         tool_description=(
-            "Probability/statistics specialist. Use it for requests related to probability and statistics, "
-            "topic extraction and description, and representative-paper main results."
+            "Probability and Statistics specialist. Use for probability, stochastic processes, or statistics."
         ),
         max_turns=6,
     )
     alain_tool = build_alain_agent().as_tool(
         tool_name="alain_agent_tool",
         tool_description=(
-            "Algebra specialist. Use it for requests related to algebraic geometry, rings and algebras, "
-            "group theory, topic extraction and description, and representative-paper main results."
+            "Algebra specialist. Use for algebraic geometry, rings and algebras, group theory, and algebraic topology."
         ),
         max_turns=6,
     )
@@ -192,29 +198,29 @@ def build_julius_agent() -> Agent:
     )
     elisa_tool = build_elisa_agent().as_tool(
         tool_name="elisa_agent_tool",
-        tool_description="Applied mathematics and cryptography specialist. Use for optimization, control, cryptography, or security.",
+        tool_description="Applied mathematics and cryptography specialist. Use for optimization, numerical analysis, cryptography, or security.",
         max_turns=6,
     )
     felix_tool = build_felix_agent().as_tool(
         tool_name="felix_agent_tool",
-        tool_description="Dynamical systems and symplectic geometry specialist. Use for long-term behavior, chaos, Hamiltonian systems, or symplectic geometry.",
+        tool_description="Dynamical systems and symplectic geometry specialist. Use for Dynamical sytems, Hamiltonian systems, or symplectic geometry.",
         max_turns=6,
     )
     abdoulaye_tool = build_abdoulaye_agent().as_tool(
         tool_name="abdoulaye_agent_tool",
-        tool_description="Machine-learning specialist. Use for ML algorithms, learning theory, and AI applications.",
+        tool_description="Data science amd Machine-learning specialist. Use for ML algorithms, learning theory, and AI applications.",
         max_turns=6,
     )
     jean_baptiste_tool = build_jean_baptiste_agent().as_tool(
         tool_name="jean_baptiste_agent_tool",
-        tool_description="Data science, NLP, LLM, and agentic-AI specialist with production deployment expertise.",
+        tool_description="NLP, LLM, and agentic-AI specialist with production deployment expertise.",
         max_turns=6,
     )
     michel_tool = build_michel_agent().as_tool(
         tool_name="michel_agent_tool",
         tool_description=(
-            "General-audience explainer. Use it to get feedback about how to simplify technical mathematics, add intuition, "
-            "or create metaphors for non-experts."
+            "General-audience explainer. Use for feedback about simplifying technical mathematics, providing more intuition, "
+            "or generating metaphors when addressing to a general audience."
         ),
         max_turns=6,
     )
@@ -222,7 +228,7 @@ def build_julius_agent() -> Agent:
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
         "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating.\n"
-        "Use `get_field_family_tool` when planning spans mathematics and AI, so each allocation is routed to its correct expertise/field family.\n"
+        # "Use `get_field_family_tool` when planning spans mathematics and AI, so each allocation is routed to its correct expertise/field family.\n"
         "For example, if the user request mathematics, only allocate anything to agents specialized in mathematics\n"
         "Use `chris_agent_tool` to delegate probability or statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
@@ -261,7 +267,7 @@ def build_julius_agent() -> Agent:
         instructions=instructions,
         tools=[
             extract_date_range_tool,
-            get_field_family_tool,
+            # get_field_family_tool,
             allocate_topics_tool,
             chris_tool,
             alain_tool,
@@ -399,10 +405,10 @@ def _is_supported_specialist_request_with_llm(text: str) -> bool:
     return content == "yes"
 
 # note: test as-is, otherwise update to assess if message is about math/ai OR move that information in the allocation topic tool
-@function_tool(name_override="get_field_family_tool")
-def get_field_family_tool(agent_name: str) -> Dict[str, str]:
-    """Identify whether a specialist belongs to the mathematics or AI family."""
-    return {"agent_name": agent_name, "family": family_for_agent(agent_name).value}
+# @function_tool(name_override="get_field_family_tool")
+# def get_field_family_tool(agent_name: str) -> Dict[str, str]:
+#     """Identify whether a specialist belongs to the mathematics or AI family."""
+#     return {"agent_name": agent_name, "family": family_for_agent(agent_name).value}
 
 
 @function_tool(name_override="allocate_topics_tool")
@@ -451,6 +457,7 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
         {
             "agent_name": agent_name,
             "specialty": agent_descriptions.get(agent_name, "not implemented agent"),
+            "specialty_domain": family_for_agent(agent_name).value
         }
         for agent_name in agent_order
     ]

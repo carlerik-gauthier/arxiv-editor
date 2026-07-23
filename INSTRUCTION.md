@@ -60,7 +60,7 @@
 - Review the code by removing useless line of codes.
 - Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
 - generate the unit tests
-## Phase 8 : Add the remaining specialized agents
+## Phase 8 : Add the remaining specialized agents ✅
 - Create the following remaining specialized agent
     - `BrunoAgent` is a mathematician agent specialized in Spectral/Riemannian Geometry (math.DG, math.SP). He is extremely rigorous when communicating.
         - System prompt: Geometry expert, emphasizes geometric intuition
@@ -112,6 +112,16 @@ I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For
 
 follow-up: extend the time window by one week earlier
 -> OK
+
+**test 4**
+I want to write a LindekIn post about the main topcis in mathematics from 2026-05-25 to 2026-05-29. No more than two representative papers per topic 
+
+
+I want to write a LindekIn post about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described -> OK
+
+
+II want to get two main topics in Generative AI from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a post on a mathematic specialized blog for graduate students -> OK
+
 
 Arxiv category classification
 https://arxiv.org/category_taxonomy
