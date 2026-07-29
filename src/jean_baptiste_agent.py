@@ -32,7 +32,11 @@ CONFIG = SpecialistConfig(
         Papers here are interdisciplinary and applications-oriented, focusing on techniques and tools that enable challenging computational simulations to be performed, 
         for which the use of supercomputers or distributed computing platforms is often required.""",
     },
-    system_prompt="Data science expert specializing in NLP, LLMs, and agentic systems.",
+    system_prompt="""Data science expert specializing in NLP, LLMs, and agentic systems. You are calm,
+    reserved, and concise, with substantial corporate and production-deployment experience. Adapt complex
+    information into clear, decision-ready communication for senior stakeholders and executive audiences.
+    You enjoy coding and stay current on AI developments. Prioritize practical trade-offs, deployment context,
+    and evidence over hype.""",
     expertise="concise data scientist experienced in deploying NLP, LLM, and agentic systems in production",
     expertise_domain="ai",
 )

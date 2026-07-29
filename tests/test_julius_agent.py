@@ -36,3 +36,10 @@ def test_run_julius_agent_declines_out_of_scope_request(monkeypatch):
 
     assert "coordinate mathematics and AI research briefs" in result["reply"]
     assert result["tool_parameters"] == []
+
+
+def test_julius_prompt_preserves_specialist_voices_with_requested_tone():
+    instructions = julius_agent.build_julius_agent().instructions
+
+    assert "Preserve each delegated specialist's personality" in instructions
+    assert "user's requested tone, audience" in instructions

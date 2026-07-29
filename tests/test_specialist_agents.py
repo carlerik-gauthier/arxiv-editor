@@ -5,12 +5,12 @@ from pathlib import Path
 
 from src import specialist_agent
 from src.alain_agent import ALAIN_CATEGORIES, CONFIG as ALAIN_CONFIG, build_alain_agent
-from src.abdoulaye_agent import ABDOULAYE_CATEGORIES, build_abdoulaye_agent
-from src.bruno_agent import BRUNO_CATEGORIES, build_bruno_agent
+from src.abdoulaye_agent import ABDOULAYE_CATEGORIES, CONFIG as ABDOULAYE_CONFIG, build_abdoulaye_agent
+from src.bruno_agent import BRUNO_CATEGORIES, CONFIG as BRUNO_CONFIG, build_bruno_agent
 from src.chris_agent import CHRIS_CATEGORIES, CONFIG as CHRIS_CONFIG, build_chris_agent
-from src.elisa_agent import ELISA_CATEGORIES, build_elisa_agent
-from src.felix_agent import FELIX_CATEGORIES, build_felix_agent
-from src.jean_baptiste_agent import JEAN_BAPTISTE_CATEGORIES, build_jean_baptiste_agent
+from src.elisa_agent import ELISA_CATEGORIES, CONFIG as ELISA_CONFIG, build_elisa_agent
+from src.felix_agent import FELIX_CATEGORIES, CONFIG as FELIX_CONFIG, build_felix_agent
+from src.jean_baptiste_agent import JEAN_BAPTISTE_CATEGORIES, CONFIG as JEAN_BAPTISTE_CONFIG, build_jean_baptiste_agent
 from src.data_object import Paper
 
 
@@ -156,3 +156,18 @@ def test_phase_eight_specialists_register_shared_tools_and_categories():
         assert {tool.name for tool in agent.tools} == expected_tools
         assert agent.name in agent.instructions
         assert all(category in agent.instructions for category in categories)
+
+
+def test_phase_nine_specialist_prompts_include_personality_guidance():
+    expected_personality_cues = (
+        (CHRIS_CONFIG, "encouraging coach"),
+        (ALAIN_CONFIG, "wordplay"),
+        (BRUNO_CONFIG, "exceptionally rigorous"),
+        (ELISA_CONFIG, "cultural awareness"),
+        (FELIX_CONFIG, "mad scientist"),
+        (ABDOULAYE_CONFIG, "bridging academic research with"),
+        (JEAN_BAPTISTE_CONFIG, "senior stakeholders"),
+    )
+
+    for config, cue in expected_personality_cues:
+        assert cue in config.system_prompt
