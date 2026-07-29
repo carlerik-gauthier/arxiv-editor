@@ -334,7 +334,7 @@ def _summarize_with_llm(config: SpecialistConfig, arxiv_id: str, title: str, con
         f"Paper content:\n{content}"
     )
     response = OpenAI(api_key=os.getenv("OPENAI_API_KEY")).responses.create(
-        model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL), input=prompt, temperature=0.1
+        model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL), input=prompt, temperature=0.2
     )
     result = (response.output_text or "").strip()
     if not result:

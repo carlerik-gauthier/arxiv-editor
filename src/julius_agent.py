@@ -25,7 +25,7 @@ from src.michel_agent import build_michel_agent
 logger = logging.getLogger(__name__)
 
 EXPECTED_FORMAT_OUTPUT_RULE = """
-    For every topic, the expected output structure is:
+    1. For every topic, the expected output structure **MUST BE**:
         # <TOPIC TITLE>: 
         <topic count> papers
         <topic description>
@@ -38,14 +38,19 @@ EXPECTED_FORMAT_OUTPUT_RULE = """
         <Representative paper main results>
         <pedagogical explanation for reprensative main result>
     Repeat as many times as there are representative papers.
-    Mandatory elements are <TOPIC TITLE>, <topic count>, <topic description> or <pedagogical explanation for topic description>, <paper title> and <paper arxiv_id>.
-    <pedagogical explanation for reprensative main result> should be provided if MichelAgent is called.
-    <pedagogical explanation for topic description> should be provided if MichelAgent is called. If necessary it can replace <topic description> 
+
+    2. Mandatory elements are <TOPIC TITLE>, <topic count>, <topic description>, <paper title>, <Representative paper main results> and <paper arxiv_id>.
+    3. Optional elements are
+    <pedagogical explanation for reprensative main result> and  <pedagogical explanation for topic description>. Both should be provided if MichelAgent is called.  
+    <pedagogical explanation for reprensative main result> and <pedagogical explanation for topic description> **MUST** be provided when the one-pager is for a general or non-expert audience
+    
     **Description**
     - <TOPIC TITLE> is an informative title describing the topic
     - <topic count> is the number of papers the topic covers.
     - <topic description> is a short description about the topic content
-    - <pedagogical explanation for topic description> is a topic simplified description to address a wide audience
+    - <pedagogical explanation for topic description> provides a simplified and more intuitive description description of the topic when addressing to a general audience
+    - <Representative paper main results> is a short description of the paper's main results
+    - <pedagogical explanation for reprensative main result> provides a simplified and more intuitive description of the main results when addressing to a general audience
     - <paper title> is the paper title
     - <paper arxiv_id> is the paper ID in ArXiv. It links to the online paper.
 
@@ -242,7 +247,7 @@ def build_julius_agent() -> Agent:
         "Use `abdoulaye_agent_tool` for data science or machine learning and `jean_baptiste_agent_tool` for NLP, "
         "LLMs, or agentic AI. Each specialist delegation must include the date range, topic count, audience, tone, "
         "and whether main results are required.\n"
-        "Use `michel_agent_tool` to get feedbacks about improvement to address non advanced experts by vulgarizing, providing intuitions and metaphors."
+        "Use `michel_agent_tool` to get feedbacks about improvement to address non-experts by vulgarizing, providing intuitions and metaphors."
         "examples, metaphors, or simpler phrasing.\n"
         "Use `editorial_one_pager_tool` to make the editorial work and build a first draft.\n"
         "Use `finalize_editorial_one_pager_tool` to finalize the one pager\n"
@@ -295,7 +300,7 @@ def run_julius_agent(
     """Run one JuliusAgent turn with SDK tracing enabled."""
     history = list(conversation_history or [])
     with trace(
-        "phase8-julius-agent-run",
+        "phase9-julius-agent-run",
         metadata={
             "agent": "JuliusAgent",
             "has_history": 'True' if bool(history) else 'False',
@@ -448,13 +453,13 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
         raise RuntimeError("OPENAI_API_KEY is required for allocate_topics_tool")
 
     agent_descriptions = {
-        "ChrisAgent": "Probability and statistics specialist. He is the agent to call only when probability or statistics related topics are needed!",
-        "AlainAgent": "Algebra specialist. He is the agent to call only when algebra related topics are needed!",
-        "BrunoAgent": "Spectral and Riemannian geometry specialist.",
-        "ElisaAgent": "Applied mathematics and cryptography specialist.",
-        "FelixAgent": "Dynamical systems and symplectic geometry specialist.",
-        "AbdoulayeAgent": "Machine-learning specialist, including learning algorithms and applications.",
-        "JeanBaptisteAgent": "Data science, NLP, LLM, and agentic-AI specialist.",
+        "ChrisAgent": "Probability and statistical theory (math.PR, math.ST): stochastic processes, limit theorems, SDEs, inference, regression, time series, and Monte Carlo.",
+        "AlainAgent": "Algebra (math.AG, math.RA, math.GR, math.AT): algebraic geometry, rings and algebras, group and representation theory, and algebraic topology.",
+        "BrunoAgent": "Differential/Riemannian geometry and spectral theory (math.DG, math.SP): manifolds, curvature, geometric analysis, and spectra of operators.",
+        "ElisaAgent": "Applied mathematics and cryptography (cs.CR, math.OC, math.NA): security protocols and privacy, optimization, control, operations research, and numerical algorithms.",
+        "FelixAgent": "Dynamical systems and symplectic geometry (math.DS, math.SG): differential-equation flows, mechanics, complex dynamics, Hamiltonian systems, and symplectic flows.",
+        "AbdoulayeAgent": "Machine learning (cs.LG, stat.ML): learning algorithms and theory, reinforcement learning, bandits, robustness, fairness, explainability, and applications.",
+        "JeanBaptisteAgent": "NLP, LLMs, agentic and multi-agent AI, and production-oriented data science (cs.CL, cs.AI, cs.MA, cs.CE).",
     }
     available_agents = [
         {
@@ -661,12 +666,13 @@ def finalize_editorial_one_pager_tool(
     """Finalize a one-pager draft using MichelAgent's editorial suggestions."""
     prompt = (
         "You are finalizing an editorial one-pager.\n"
-        "Review the draft and take into account MichelAgent feedbacks.\n"
+        "Review the draft and take into account MichelAgent feedbacks, especially when the target audience is made of non-experts (e.g. a general audience)\n"
         f"Remember you addressing to a {audience} audience and your tone must be {tone}.\n"
         "Return JSON only with keys: status, final_decision, reason, content, title"
         "needs_further_revision, michel_assessment, editorial_summary.\n"
-        "Use status=ready_to_deliver and final_decision=deliver only if the draft is clear enough for the "
+        "Use status=ready_to_deliver and final_decision=deliver only if the draft content complexity suits to the "
         "target audience and MichelAgent feedback has been integrated.\n"
+        f"Remmember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
         f"Latest Draft:\n{one_pager}\n"
@@ -715,12 +721,14 @@ def revise_one_pager_tool(
     prompt = (
         "You are reviewing a one-pager draft.\n"
         "Judge whether it matches the requested tone and audience.\n"
-        "If it does not, decide whether the main issue is clarity, metaphor, or intuition.\n"
+        "If it does not, decide whether the main issue is simplification, clarity, metaphor, or intuition.\n"
         "Return JSON only with keys: status, appropriate, reason, issue_type, recommendation.\n"
         "Use issue_type=none when the draft is appropriate.\n"
         "Use issue_type=clarity when the draft is too vague or hard to follow.\n"
         "Use issue_type=metaphor when the draft needs a metaphor to make the idea accessible.\n"
         "Use issue_type=intuition when the draft needs more intuitive explanation.\n"
+        "Use issue_type=simplification when the draft needs simplifications.\n"
+        f"Remmember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
         f"Draft:\n{one_pager}"

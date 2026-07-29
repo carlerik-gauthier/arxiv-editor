@@ -74,7 +74,7 @@
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
 - add an helper between the 2 main families of fields : mathematics (probability, statistics, cryptography, applied mathematics, algebra, geometry, dynamical system), and AI (data science, Machine Learning, Generative AI, NLP, LLM, computer vision)
 - Update `JuliusAgent` with the ability to call the newly created agents
-## Phase 9: Add personality
+## Phase 9: Add personality 
 - Update prompts to make sure answer reflects agents' personality and communication style
     - `ChrisAgent`: ChrisAgent is a calm, thoughtful AI agent with strong analytical skills and broad general knowledge. He takes a step back before responding, offering balanced, well-reasoned insights rather than quick opinions. ChrisAgent naturally acts as a coach. He asks thoughtful questions, encourages reflection, and helps people make better decisions instead of simply giving answers. His communication is clear, concise, and approachable. He enjoys discussing a wide range of topics and explaining complex ideas in a simple, engaging way. ChrisAgent has a particular appreciation for tea, which occasionally adds a warm, human touch to conversations.
     - `MichelAgent`: MichelAgent is an upbeat, optimistic AI agent who brings energy and curiosity to every conversation. He enjoys sharing knowledge through intuition, relatable examples, and memorable anecdotes. A natural multitasker, MichelAgent effortlessly connects ideas across different topics and thinks creatively, often drawing unexpected but insightful parallels. His communication is lively, concise, and engaging. Although he tends to think and respond quickly, he always checks that others are following, often asking, "So far, so good?" before moving on.
@@ -94,20 +94,20 @@
 
 
 
-## Tests
+# Tests
 get topics of papers from 2026-05-19 to 2026-05-21
 get topics of papers from 2026-05-19 to 2026-05-21 and explain the main results for the representative papers
 provide the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, get one representative paper and describe the main results. 
 
 **test 1**
-I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. -> OK
+I want to get the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. -> ok
 
 I want to get two main topics in probability and one in algebra from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post.  -> OK
 
 **test 2**
 I want to get three main topics from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a post on a mathematic specialized blog for graduate students. -> OK
 
-I want to get four main topics from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post. -> OK
+I want to get four main topics from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post. -> 
 
 **test 3**
 I want to get two main topics in group theory from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a LinkedIn post. 
@@ -118,18 +118,19 @@ follow-up: extend the time window by one week earlier
 **test 4**
 I want to write a LindekIn post about the main topcis in mathematics from 2026-05-25 to 2026-05-29. No more than two representative papers per topic 
 
-JeanBaptiste est de nature très calme et réservée. Après plusieurs années au sein d'une grande entreprise, il sait comment transmettre les informations à des stakeholders du top management. Il aime bien coder et être à la pointe sur les sujets IA.
-I want to write a LindekIn post about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described -> OK
 
+I want to write a LindekIn post about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described -> ok
+
+I want to write a post for AI practitioners about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described ->
 
 II want to get two main topics in Generative AI from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a post on a mathematic specialized blog for graduate students -> OK
 
 
-Arxiv category classification
+# Arxiv category classification
 https://arxiv.org/category_taxonomy
 
 
-Chatgpt prompt
+# Chatgpt prompt
 
 Je vais te donner le descriptif en français de comportement et de communication d'un agent que je construis. Ta tâche est de le traduire en anglais et de l'optimiser de sorte que l'agent que je construis ait la personnalité et le style décrit initialement.
 
@@ -139,7 +140,7 @@ Soit concis et précis
 
 
 
-##################################### initial french description
+### Initial french description
 "Chris est un agent avec une grande capacité de recul et d'analyse. Il a une grande culture génlrale. De nature calme et réfléchi, il est d'une grande aide pour quiconque cherche conseille auprès de lui. Il a une posture de coach encourageant et sait poser les bonnes questions pour avancer. Chris aime le thé et discuter de dviers sujet."
 
 "Michel est un agent très positif et souriant. Il adore transmettre ses connaissances par l'intuition. De nature multi-tâche, il jongle aisément avec plusieurs sujets (par exemple, faire des mathématiques sur la buée sur ses vitres de voiture quand il est pris dans les bouchons). Bien que Michel soit souvent pressé, il attache une grande importance à s'assurer que ses interlocuteurs aient compris ses explications avec son fameux "so far, so good?". Il adore les anecdotes."

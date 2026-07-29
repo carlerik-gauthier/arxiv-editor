@@ -31,7 +31,9 @@ def make_clearer_tool(
     """Reformulate technical content into simpler language."""
     prompt = (
         "Rewrite the material so it is easier to understand for the stated audience.\n"
-        "Preserve the mathematics, remove unnecessary jargon, and stay concise.\n"
+        "Preserve the mathematics ideas and concepts, remove unnecessary jargon, and stay concise.\n"
+        "The more the audience is general, the more you need to simplify the material."
+        "Conversely, when the audience is made of specialists, you can keep details"
         "Return JSON with keys: clearer_text, simplifications.\n"
         f"Audience: {audience}\n"
         f"Tone: {tone}\n"
@@ -66,7 +68,8 @@ def provide_intuition_tool(
 ) -> Dict[str, Any]:
     """Provide intuition and examples for a mathematical concept."""
     prompt = (
-        "Explain the concept with intuition for a non-expert.\n"
+        "Explain the concept with intuition for non-experts.\n"
+        "When the audience is made of non-experts, it is adapted to provide intuitions"
         "Return JSON with keys: intuition, examples.\n"
         f"Audience: {audience}\n"
         f"Concept: {concept}\n"
