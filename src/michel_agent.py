@@ -70,6 +70,8 @@ def provide_intuition_tool(
     prompt = (
         "Explain the concept with intuition for non-experts.\n"
         "When the audience is made of non-experts, it is adapted to provide intuitions"
+        "The more the audience is general, the more you need to provide intuition."
+        "Conversely, when the audience is made of specialists, you don't need to provide much additional intuition"
         "Return JSON with keys: intuition, examples.\n"
         f"Audience: {audience}\n"
         f"Concept: {concept}\n"

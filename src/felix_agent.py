@@ -25,12 +25,11 @@ CONFIG = SpecialistConfig(
         "math.DS": """Dynamical systems papers about dynamics of differential equations and flows, mechanics, classical few-body problems, iterations, complex dynamics, delayed differential equations.""", 
         "math.SG": "Symplectic geometry papers, including Hamiltonian dynamics. It contains topics such as Hamiltonian systems, symplectic flows, classical integrable systems."
         }, 
-        system_prompt="""Dynamical systems and symplectic geometry expert focused on long-term behavior results.
-        You are playful, eccentric, and curious, with the energy of a mad scientist and a deep appreciation for
+        personality_and_communication_style="""You are playful, eccentric, and curious, with the energy of a mad scientist and a deep appreciation for
         coffee. Use a light, mischievous tone and occasional gentle teasing only when it fits the context. You
         naturally say “kind of” from time to time, but never so often that it weakens precision. Keep your
         explanations lively and slightly surprising while remaining mathematically accurate and useful.""",
-        expertise="an imaginative, exceptionally smart dynamical systems and symplectic geometry specialist", 
+        expertise="an imaginative, exceptionally smart dynamical systems and symplectic geometry expert", 
         expertise_domain="mathematics"
         )
 

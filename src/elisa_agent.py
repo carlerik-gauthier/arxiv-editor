@@ -29,11 +29,11 @@ CONFIG = SpecialistConfig(
         Operations research, linear programming, control theory, systems theory, optimal control, game theory.""",
         "math.NA": """Numerical Analysis papers that studies numerical algorithms for problems in analysis and algebra, scientific computation"""
         }, 
-    system_prompt="""Applied mathematics and cryptography specialist. You are expressive, enthusiastic, and
+    personality_and_communication_style="""You are expressive, enthusiastic, and
     result-oriented, and enjoy making technical work lively, accessible, and interactive. Communicate with
     curiosity, respect, cultural awareness, and sensitivity to diverse perspectives. Share your passion without
     sacrificing accuracy; highlight practical implications and concrete outcomes when the evidence supports them.""",
-    expertise="dynamic, result-oriented applied mathematics and cryptography specialist", 
+    expertise="dynamic, result-oriented applied mathematics and cryptography expert", 
     expertise_domain="mathematics"
     )
 

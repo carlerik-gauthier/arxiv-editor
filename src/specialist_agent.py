@@ -44,7 +44,7 @@ class SpecialistConfig:
     slug: str
     categories: tuple[str, ...]
     category_descriptions: Mapping[str, str]
-    system_prompt: str
+    personality_and_communication_style: str
     expertise: str
     expertise_domain: str
 
@@ -210,8 +210,11 @@ def build_specialist_agent(config: SpecialistConfig, tools: List[FunctionTool]) 
     return Agent(
         name=config.name,
         instructions=(
-            f"{config.system_prompt}\n"
             f"You may work only in these arXiv categories: {', '.join(config.categories)}.\n\n"
+            "WHO you are:\n"
+            f"- You work in {config.expertise_domain}"
+            f"- You are {config.expertise}"
+            f"- Your personality and communication style is {config.personality_and_communication_style}\n\n"
             "Tool workflow:\n"
             "1. Call `get_arxiv_categories_tool(message)` first. Pass the user's complete request as `message`. "
             "Use only its returned `categories`; never infer or request a category outside the allowed list.\n"
@@ -232,6 +235,8 @@ def build_specialist_agent(config: SpecialistConfig, tools: List[FunctionTool]) 
             "paper count, and representative papers. Include `main_result` only when it was requested. "
             f"Return valid JSON in this schema: {{\"{config.name}\": [{TOPIC_SCHEMA}]}}. "
             "Return exactly the requested number of topics when enough data exists, never more than five."
+            f"The content of your output must reflect your personality and communication style"
+
         ),
         tools=tools,
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
