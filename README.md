@@ -11,6 +11,9 @@ needed, and then assembles a professional brief for the requested audience and
 tone. The workflow uses the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
 for agents, tools, delegation, runners, and tracing.
 
+## Experimentation outcome
+This branch is the result of a successful experiment. Codex coding agent assisted to refine the instruction steps, implementing the code first draft that I reviewed and tested (and of course, understanding it) before approving moving to the next step. When the generated was not fully in line with my expectation, I was able to fix.
+
 ## Supported areas
 
 | Family | Specialists | arXiv categories |
