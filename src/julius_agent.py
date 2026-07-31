@@ -236,7 +236,7 @@ def build_julius_agent() -> Agent:
     instructions = (
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
-        "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating.\n"
+        "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating and the requested topic count.\n"
         "For example, if the user request mathematics, only allocate anything to agents specialized in mathematics\n"
         "Use `chris_agent_tool` to delegate probability or statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
@@ -255,7 +255,8 @@ def build_julius_agent() -> Agent:
         "If the user has not specified an audience, assume LinkedIn.\n"
         "If the user has not specified a tone, assume professional.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
-        "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, an appealing title, the target audience and the tone to use.\n"
+        "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, the requested topic count, \n"
+        "and an appealing title, the target audience and the tone to use.\n"
         "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent feedback, the tone and targeted audience.\n"
         "When calling `allocate_topics_tool`, pass the full user request so the allocation can reflect the domain mix and requested number of topics.\n"
         "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
@@ -311,7 +312,7 @@ def run_julius_agent(
     """
     history = list(conversation_history or [])
     with trace(
-        "phase9-julius-agent-run",
+        "arxiv-editor-run",
         metadata={
             "agent": "JuliusAgent",
             "has_history": 'True' if bool(history) else 'False',
@@ -477,10 +478,10 @@ def allocate_topics_tool(
     payload = _allocate_topics_with_llm(message, agent_order)
     allocations = _normalize_allocation_payload(payload, agent_order)
     requested_topic_count = payload.get("requested_topic_count")
-    if not isinstance(requested_topic_count, int):
-        requested_topic_count = sum(item["topic_count"] for item in allocations)
     requested_topic_count = max(1, min(requested_topic_count, DEFAULT_MAX_TOPICS))
     allocations = _cap_allocations(allocations, requested_topic_count)
+    if not isinstance(requested_topic_count, int):
+        requested_topic_count = sum(item["topic_count"] for item in allocations)
 
     return {
         "status": "success",
@@ -539,7 +540,7 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
         "- If the user provides an allocation, you must meet the given allocation. In particular you are prohibited to allocate less.\n"
         "- The total number of topics you allocate must be greater or equal to the total number of topics required by the user.\n"
         "- If you can infer the total number of topics requested by the user, you must be satisfy that number.\n"
-        "- If you cannot find out the total number of topics requested by the user, assume it is 3.\n"
+        "- If you cannot find out the total number of topics requested by the user, assume it is 5.\n"
         "- Return JSON only with this schema:\n"
         "{"
         "\"requested_topic_count\": <int>, "
@@ -723,6 +724,7 @@ def editorial_one_pager_tool(
         "editorial_summary, content.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
+        "**NEVER change** the paper titles nor the links to ArXiv\n"
         f"You must return **exactly** {min(requested_topic_count, 5)} topics.\n"
         f"If you get less than {requested_topic_count} topics, return all of them\n"
         f"Target Audience is {audience} and the one-pager tone is expected to be {tone}\n"
@@ -811,13 +813,14 @@ def finalize_editorial_one_pager_tool(
     """
     prompt = (
         "You are finalizing an editorial one-pager.\n"
-        "Review the draft and take into account MichelAgent feedbacks, especially when the target audience is made of non-experts (e.g. a general audience)\n"
+        "Review the one pager draft and take into account MichelAgent feedbacks, especially when the target audience is made of non-experts (e.g. a general audience)\n"
         f"Remember you addressing to a {audience} audience and your tone must be {tone}.\n"
         "Return JSON only with keys: status, final_decision, reason, content, title"
         "needs_further_revision, michel_assessment, editorial_summary.\n"
         "Use status=ready_to_deliver and final_decision=deliver only if the draft content complexity suits to the "
         "target audience and MichelAgent feedback has been integrated.\n"
-        f"Remmember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
+        f"Remember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
+        "**NEVER change** the paper titles nor the links to ArXiv\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
         f"Latest Draft:\n{one_pager}\n"
@@ -887,7 +890,7 @@ def revise_one_pager_tool(
         "Use issue_type=metaphor when the draft needs a metaphor to make the idea accessible.\n"
         "Use issue_type=intuition when the draft needs more intuitive explanation.\n"
         "Use issue_type=simplification when the draft needs simplifications.\n"
-        f"Remmember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
+        f"Remember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
         f"Draft:\n{one_pager}"

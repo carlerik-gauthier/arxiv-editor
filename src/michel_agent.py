@@ -217,6 +217,7 @@ def build_michel_agent() -> Agent:
             "Use `assess_non_expert_satisfaction_tool` to judge whether the explanation is satisfactory for non-experts.\n"
             "If the assessment is negative, explain why, identify what is missing, then revise using the other tools.\n"
             "When relevant, combine the tools in sequence until the explanation is satisfactory for non-experts."
+            "Return a valid JSON with keys input_message and feedback"
         ),
         tools=[
             make_clearer_tool,
@@ -228,11 +229,12 @@ def build_michel_agent() -> Agent:
     )
 
 
-def run_michel_agent(message: str) -> Dict[str, Any]:
+def run_michel_agent(one_pager_draft: str, issue_to_fix: str) -> Dict[str, Any]:
     """Run one traced MichelAgent turn for a user message.
 
     Args:
-        message: User request or technical content for Michel to process.
+        one_pager_draft: User one pager content for Michel to process.
+        issue_to_fix: The issue Michel needs to fix
 
     Returns:
         Dict[str, Any]: The agent reply and the arguments passed to invoked tools.
@@ -240,6 +242,13 @@ def run_michel_agent(message: str) -> Dict[str, Any]:
     Raises:
         Exception: If the OpenAI Agents SDK cannot complete the agent run.
     """
+    message = (
+        f"The following one pager draft has {issue_to_fix} issue that you must fix.\n"
+        "Return a valid JSON only with keys 'one_pager_draft' and 'michel_agent_feedback'.\n"
+        f"'one_pager_draft' contains {one_pager_draft}, and 'michel_agent_feedback' contains a string that contains the suggested improvements.\n"
+        f"The one pager draft to improve is {one_pager_draft}\n"
+        "**NEVER change** the paper titles nor the links to ArXiv"
+    )
     agent = build_michel_agent()
     with trace(
         "phase5-michel-agent-run",
