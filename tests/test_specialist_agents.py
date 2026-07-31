@@ -15,6 +15,15 @@ from src.data_object import Paper
 
 
 def _paper(arxiv_id: str, category: str) -> Paper:
+    """Build a minimal valid paper for specialist-workflow tests.
+
+    Args:
+        arxiv_id: Identifier assigned to the synthetic paper.
+        category: Primary and only arXiv category for the synthetic paper.
+
+    Returns:
+        Paper: Valid paper model with deterministic test metadata.
+    """
     return Paper(
         arxiv_id=arxiv_id,
         title="A paper",
@@ -33,10 +42,30 @@ def _paper(arxiv_id: str, category: str) -> Paper:
 
 
 def test_fetch_papers_defaults_to_specialist_categories(monkeypatch, tmp_path):
+    """Verify empty requested categories default to the full specialty.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the fetcher and environment.
+        tmp_path: Temporary directory used for generated CSV output.
+
+    Returns:
+        None: Asserts every configured category is fetched and persisted.
+    """
     calls = []
 
     class FakeFetcher:
         def fetch_by_category(self, category, start_date, end_date, max_results):
+            """Record one category request and return a synthetic paper.
+
+            Args:
+                category: Requested arXiv category.
+                start_date: Inclusive start date passed by the workflow.
+                end_date: Inclusive end date passed by the workflow.
+                max_results: Maximum result count passed by the workflow.
+
+            Returns:
+                list[Paper]: One paper in the requested category.
+            """
             calls.append(category)
             return [_paper(category, category)]
 
@@ -52,8 +81,24 @@ def test_fetch_papers_defaults_to_specialist_categories(monkeypatch, tmp_path):
 
 
 def test_fetch_papers_returns_no_csv_below_threshold(monkeypatch):
+    """Verify insufficient fetched papers produce no CSV output.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the arXiv fetcher.
+
+    Returns:
+        None: Asserts the workflow reports a failure without a CSV path.
+    """
     class FakeFetcher:
         def fetch_by_category(self, *args):
+            """Return no papers for any mocked category request.
+
+            Args:
+                *args: Positional fetch arguments ignored by this test double.
+
+            Returns:
+                list[Paper]: Empty result set used to trigger the threshold path.
+            """
             return []
 
     monkeypatch.setattr(specialist_agent, "ArxivFetcher", FakeFetcher)
@@ -65,11 +110,30 @@ def test_fetch_papers_returns_no_csv_below_threshold(monkeypatch):
 
 
 def test_find_topics_clamps_topic_count(monkeypatch, tmp_path):
+    """Verify requested topic and paper counts are clamped to valid limits.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace topic computation.
+        tmp_path: Temporary directory used for the input CSV.
+
+    Returns:
+        None: Asserts the topic helper receives normalized count values.
+    """
     csv_path = tmp_path / "papers.csv"
     csv_path.write_text("arxiv_id,title,summary\n1,t,s\n", encoding="utf-8")
     captured = {}
 
     def fake_compute_topics(path, n_topics, n_papers_per_topic):
+        """Capture normalized topic parameters and return a synthetic topic.
+
+        Args:
+            path: CSV path passed by the workflow.
+            n_topics: Normalized maximum topic count.
+            n_papers_per_topic: Normalized representative-paper count.
+
+        Returns:
+            list[dict[str, str]]: Single synthetic topic record.
+        """
         captured.update(path=path, n_topics=n_topics, n_papers_per_topic=n_papers_per_topic)
         return [{"topic_title": "Topic"}]
 
@@ -81,8 +145,27 @@ def test_find_topics_clamps_topic_count(monkeypatch, tmp_path):
 
 
 def test_extract_main_result_returns_download_failure(monkeypatch):
+    """Verify extraction download errors become recoverable result payloads.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the arXiv fetcher.
+
+    Returns:
+        None: Asserts download failure does not expose a main result.
+    """
     class FakeFetcher:
         def fetch_paper_markdown(self, **kwargs):
+            """Raise a deterministic download error for any extraction request.
+
+            Args:
+                **kwargs: Keyword arguments ignored by this failure test double.
+
+            Returns:
+                str: This method does not return because it always raises.
+
+            Raises:
+                RuntimeError: Always, to simulate an unavailable paper source.
+            """
             raise RuntimeError("unavailable")
 
     monkeypatch.setattr(specialist_agent, "ArxivFetcher", FakeFetcher)
@@ -93,20 +176,52 @@ def test_extract_main_result_returns_download_failure(monkeypatch):
 
 
 def test_classify_categories_defaults_without_api_key(monkeypatch):
+    """Verify category inference uses all allowed categories without an API key.
+
+    Args:
+        monkeypatch: Pytest fixture used to remove the API key.
+
+    Returns:
+        None: Asserts the entire configured category set is returned.
+    """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert specialist_agent.classify_categories(ALAIN_CONFIG, "group theory") == list(ALAIN_CATEGORIES)
 
 
 def test_classify_categories_includes_configured_category_descriptions(monkeypatch):
+    """Verify model-based category prompts include configured descriptions.
+
+    Args:
+        monkeypatch: Pytest fixture used to substitute the OpenAI client.
+
+    Returns:
+        None: Asserts selected categories and prompt descriptions are correct.
+    """
     captured = {}
 
     class FakeResponses:
         def create(self, **kwargs):
+            """Capture model request parameters and return a category response.
+
+            Args:
+                **kwargs: OpenAI response-creation arguments to record.
+
+            Returns:
+                object: Response-shaped object with a selected-category JSON body.
+            """
             captured.update(kwargs)
             return type("Response", (), {"output_text": '{"categories":["math.AG"]}'})()
 
     class FakeOpenAI:
         def __init__(self, api_key):
+            """Create a fake OpenAI client exposing fake response operations.
+
+            Args:
+                api_key: API key accepted for interface compatibility.
+
+            Returns:
+                None: Initializes the fake ``responses`` attribute.
+            """
             self.responses = FakeResponses()
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -118,6 +233,11 @@ def test_classify_categories_includes_configured_category_descriptions(monkeypat
 
 
 def test_specialist_agents_register_the_same_shared_tools():
+    """Verify base specialists register the same shared tool set.
+
+    Returns:
+        None: Asserts Chris and Alain expose identical required tool names.
+    """
     chris_tools = {tool.name for tool in build_chris_agent().tools}
     alain_tools = {tool.name for tool in build_alain_agent().tools}
     expected = {"get_arxiv_categories_tool", "check_paper_tool", "arxiv_fetcher_tool", "find_topic_tool", "extract_main_result_tool"}
@@ -127,6 +247,11 @@ def test_specialist_agents_register_the_same_shared_tools():
 
 
 def test_specialist_prompt_instructs_the_full_tool_workflow():
+    """Verify specialist prompts document the complete shared tool workflow.
+
+    Returns:
+        None: Asserts every tool and key workflow condition appears in the prompt.
+    """
     instructions = build_chris_agent().instructions
 
     for tool_name in (
@@ -142,6 +267,11 @@ def test_specialist_prompt_instructs_the_full_tool_workflow():
 
 
 def test_phase_eight_specialists_register_shared_tools_and_categories():
+    """Verify Phase 8 specialists expose shared tools and own categories.
+
+    Returns:
+        None: Asserts each agent prompt contains its name and categories.
+    """
     agents_and_categories = (
         (build_bruno_agent, BRUNO_CATEGORIES),
         (build_elisa_agent, ELISA_CATEGORIES),
@@ -159,6 +289,11 @@ def test_phase_eight_specialists_register_shared_tools_and_categories():
 
 
 def test_phase_nine_specialist_prompts_include_personality_guidance():
+    """Verify Phase 9 configurations retain their defining personality cues.
+
+    Returns:
+        None: Asserts each specialist's prompt includes its expected cue.
+    """
     expected_personality_cues = (
         (CHRIS_CONFIG, "encouraging coach"),
         (ALAIN_CONFIG, "wordplay"),

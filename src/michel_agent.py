@@ -28,7 +28,17 @@ def make_clearer_tool(
     audience: str = "general audience",
     tone: str = "clear and concise",
 ) -> Dict[str, Any]:
-    """Reformulate technical content into simpler language."""
+    """Reformulate technical content in language suitable for a target audience.
+
+    Args:
+        text: Technical material to rewrite.
+        audience: Intended readers whose prior knowledge guides simplification.
+        tone: Requested voice for the rewritten explanation.
+
+    Returns:
+        Dict[str, Any]: Success payload containing the audience, tone, clearer
+        text, and the applied simplifications.
+    """
     prompt = (
         "Rewrite the material so it is easier to understand for the stated audience.\n"
         "Preserve the mathematics ideas and concepts, remove unnecessary jargon, and stay concise.\n"
@@ -66,7 +76,17 @@ def provide_intuition_tool(
     explanation: str = "",
     audience: str = "general audience",
 ) -> Dict[str, Any]:
-    """Provide intuition and examples for a mathematical concept."""
+    """Provide an accessible intuition and examples for a mathematical concept.
+
+    Args:
+        concept: Concept that needs an intuitive explanation.
+        explanation: Existing explanation to complement, if available.
+        audience: Intended readers whose background determines the detail level.
+
+    Returns:
+        Dict[str, Any]: Success payload with the concept, audience, intuition,
+        and one or more examples.
+    """
     prompt = (
         "Explain the concept with intuition for non-experts.\n"
         "When the audience is made of non-experts, it is adapted to provide intuitions"
@@ -100,7 +120,17 @@ def metaphor_tool(
     explanation: str = "",
     audience: str = "general audience",
 ) -> Dict[str, Any]:
-    """Produce metaphors that make a concept easier to picture."""
+    """Produce a faithful metaphor that makes a concept easier to picture.
+
+    Args:
+        concept: Concept for which to construct a metaphor.
+        explanation: Existing explanation to use as context, if available.
+        audience: Intended readers whose background guides the metaphor.
+
+    Returns:
+        Dict[str, Any]: Success payload containing the concept, audience,
+        metaphor, and an explanation of its value.
+    """
     prompt = (
         "Create vivid but accurate metaphors about the concept.\n"
         "It must be adapted to the audience.\n"
@@ -130,7 +160,17 @@ def assess_non_expert_satisfaction_tool(
     audience: str = "general audience",
     concept: str = "",
 ) -> Dict[str, Any]:
-    """Assess whether an explanation is satisfactory for non-experts."""
+    """Assess whether an explanation adequately serves non-expert readers.
+
+    Args:
+        explanation: Explanation to evaluate for clarity and completeness.
+        audience: Intended readers used to calibrate the assessment.
+        concept: Optional concept that the explanation should cover.
+
+    Returns:
+        Dict[str, Any]: Success payload with a satisfaction flag, rationale,
+        missing elements, and improvement advice.
+    """
     prompt = (
         "Assess whether the explanation about the concept is satisfactory for the audience.\n"
         "Return JSON with keys: satisfactory, reason, missing_elements, improvement_advice.\n"
@@ -162,7 +202,11 @@ def assess_non_expert_satisfaction_tool(
 
 
 def build_michel_agent() -> Agent:
-    """Create MichelAgent for phase 5."""
+    """Create the explanation specialist with its four SDK tools.
+
+    Returns:
+        Agent: Configured ``MichelAgent`` instance ready for execution.
+    """
     return Agent(
         name="MichelAgent",
         instructions=(
@@ -185,7 +229,17 @@ def build_michel_agent() -> Agent:
 
 
 def run_michel_agent(message: str) -> Dict[str, Any]:
-    """Run one MichelAgent turn with SDK tracing enabled."""
+    """Run one traced MichelAgent turn for a user message.
+
+    Args:
+        message: User request or technical content for Michel to process.
+
+    Returns:
+        Dict[str, Any]: The agent reply and the arguments passed to invoked tools.
+
+    Raises:
+        Exception: If the OpenAI Agents SDK cannot complete the agent run.
+    """
     agent = build_michel_agent()
     with trace(
         "phase5-michel-agent-run",
@@ -201,7 +255,15 @@ def run_michel_agent(message: str) -> Dict[str, Any]:
 
 
 def _json_response(prompt: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a structured LLM response when configured, else a deterministic fallback."""
+    """Return a structured model response or a deterministic fallback.
+
+    Args:
+        prompt: Instruction requesting a JSON object from the configured model.
+        fallback: Payload returned when no model response can be used.
+
+    Returns:
+        Dict[str, Any]: Parsed model JSON when valid; otherwise ``fallback``.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return fallback
@@ -234,7 +296,16 @@ def _fallback_non_expert_assessment(
     audience: str,
     concept: str,
 ) -> Dict[str, Any]:
-    """Heuristic fallback used when no LLM response is available."""
+    """Assess explanation quality deterministically when the model is unavailable.
+
+    Args:
+        explanation: Explanation whose clarity and completeness are assessed.
+        audience: Readers used to calibrate the fallback assessment.
+        concept: Optional concept being explained.
+
+    Returns:
+        Dict[str, Any]: Assessment payload with satisfaction, gaps, and advice.
+    """
     stripped = explanation.strip()
     if not stripped:
         return {
@@ -274,7 +345,14 @@ def _fallback_non_expert_assessment(
 
 
 def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:
-    """Extract function-tool call arguments from SDK run items."""
+    """Extract function-tool names and arguments from SDK run items.
+
+    Args:
+        new_items: Items emitted by an OpenAI Agents SDK run.
+
+    Returns:
+        List[Dict[str, Any]]: One tool-and-arguments mapping per function call.
+    """
     extracted: List[Dict[str, Any]] = []
     for item in new_items:
         raw_item = getattr(item, "raw_item", None)

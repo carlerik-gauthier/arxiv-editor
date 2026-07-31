@@ -8,7 +8,11 @@ from src.julius_agent import run_julius_agent
 
 
 def run_app() -> None:
-    """Run a session-memory chat against JuliusAgent."""
+    """Render and run the Phase 7 session-memory JuliusAgent chat.
+
+    Returns:
+        None: Renders the interface and updates session-state messages.
+    """
     st.set_page_config(page_title="Phase 7 - Refactored Workflow", page_icon="R", layout="wide")
     st.title("Phase 7: Refactored ArXiv Workflow")
     messages = st.session_state.setdefault("messages", [])

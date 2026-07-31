@@ -14,6 +14,14 @@ class _TransformersPathAliasFilter(logging.Filter):
     """Drop known noisy Transformers alias warnings about `__path__`."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Decide whether a log record should remain visible.
+
+        Args:
+            record: Log record emitted by the Transformers logger.
+
+        Returns:
+            bool: ``False`` for the known noisy alias warning; otherwise ``True``.
+        """
         msg = record.getMessage()
         return not (
             "Accessing `__path__`" in msg
@@ -36,11 +44,21 @@ logging.getLogger("transformers").addFilter(_TransformersPathAliasFilter())
 
 
 def _init_state() -> None:
+    """Initialize the current session's chat transcript when absent.
+
+    Returns:
+        None: Creates an empty ``messages`` list in Streamlit session state.
+    """
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
 
 def run_app() -> None:
+    """Render and run the Phase 2 ChrisAgent chat interface.
+
+    Returns:
+        None: Renders the interface and updates session-state messages.
+    """
     st.set_page_config(page_title="Phase 2 - ChrisAgent", page_icon="📗", layout="wide")
     st.title("Phase 2: ChrisAgent (Topics + Main Results)")
     st.caption("Chat memory is stored in this session.")

@@ -1,12 +1,10 @@
-"""Phase 6 JuliusAgent implementation with OpenAI Agents SDK."""
+"""JuliusAgent: the editorial coordinator for ArXiv research one-pagers."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-import logging
-from datetime import datetime, timedelta
 from openai import OpenAI
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -21,8 +19,7 @@ from src.felix_agent import build_felix_agent
 from src.field_family import family_for_agent
 from src.jean_baptiste_agent import build_jean_baptiste_agent
 from src.michel_agent import build_michel_agent
-
-logger = logging.getLogger(__name__)
+from src.specialist_agent import extract_date_range as extract_specialist_date_range
 
 EXPECTED_FORMAT_OUTPUT_RULE = """
     1. For every topic, the expected output structure **MUST BE**:
@@ -77,14 +74,13 @@ JULIUS_SYSTEM_PROMPT = (
     "- When you call ChrisAgent or AlainAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
     "- When you call MichelAgent, pass the exact concept or draft text that needs to be made clearer.\n"
-    "- You must never clarity, intuition, and metaphor work by yourself\n"
+    "- Do not create clarity, intuition, or metaphor material yourself; delegate it to MichelAgent.\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
     "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
-    "- If the request is outside probability/statistics or algebra, reply politely that you do not have knowledge about it.\n"
+    "- If the request is outside the supported mathematics and AI specialties, reply politely and state the supported scope.\n"
 )
 
 DEFAULT_MAX_TOPICS = 5
-DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 20
 
@@ -184,7 +180,12 @@ _SUPPORTED_AGENT_ORDER = (
 
 
 def build_julius_agent() -> Agent:
-    """Create JuliusAgent for phase 6."""
+    """Build the editorial coordinator with delegation and drafting tools.
+
+    Returns:
+        Agent: Configured ``JuliusAgent`` instance ready to coordinate research
+        specialists and assemble one-pagers.
+    """
     chris_tool = build_chris_agent().as_tool(
         tool_name="chris_agent_tool",
         tool_description=(
@@ -236,7 +237,6 @@ def build_julius_agent() -> Agent:
         f"{JULIUS_SYSTEM_PROMPT}\n"
         "Use `extract_date_range_tool` to find the date range requested by the user.\n"
         "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating.\n"
-        # "Use `get_field_family_tool` when planning spans mathematics and AI, so each allocation is routed to its correct expertise/field family.\n"
         "For example, if the user request mathematics, only allocate anything to agents specialized in mathematics\n"
         "Use `chris_agent_tool` to delegate probability or statistics work and collect topic titles, descriptions, "
         "representative papers, and main results when needed.\n"
@@ -253,7 +253,7 @@ def build_julius_agent() -> Agent:
         "Use `finalize_editorial_one_pager_tool` to finalize the one pager\n"
         "Use `revise_one_pager_tool` to decide if the one pager needs further improvement\n"
         "If the user has not specified an audience, assume LinkedIn.\n"
-        "If the user has not specified a tone, aussume professional.\n"
+        "If the user has not specified a tone, assume professional.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
         "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, an appealing title, the target audience and the tone to use.\n"
         "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent feedback, the tone and targeted audience.\n"
@@ -275,7 +275,6 @@ def build_julius_agent() -> Agent:
         instructions=instructions,
         tools=[
             extract_date_range_tool,
-            # get_field_family_tool,
             allocate_topics_tool,
             chris_tool,
             alain_tool,
@@ -287,7 +286,7 @@ def build_julius_agent() -> Agent:
             michel_tool,
             editorial_one_pager_tool,
             finalize_editorial_one_pager_tool,
-            revise_one_pager_tool
+            revise_one_pager_tool,
         ],
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
     )
@@ -297,7 +296,19 @@ def run_julius_agent(
     message: str,
     conversation_history: Optional[Iterable[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """Run one JuliusAgent turn with SDK tracing enabled."""
+    """Run one traced editorial-coordinator turn.
+
+    Args:
+        message: Current user request for a research brief.
+        conversation_history: Optional preceding chat messages with ``role`` and
+            ``content`` fields.
+
+    Returns:
+        Dict[str, Any]: Reply text and parameters passed to invoked tools.
+
+    Raises:
+        Exception: If the OpenAI Agents SDK cannot complete a supported request.
+    """
     history = list(conversation_history or [])
     with trace(
         "phase9-julius-agent-run",
@@ -318,7 +329,6 @@ def run_julius_agent(
                 "tool_parameters": [],
             }
 
-        # enriched_message = _enrich_message_for_michel(message, history)
         agent = build_julius_agent()
         result = Runner.run_sync(agent, combined_context, max_turns=DEFAULT_MAX_TURNS)
 
@@ -331,16 +341,30 @@ def _conversation_context(
     conversation_history: List[Dict[str, str]],
     message: str,
 ) -> str:
-    """Collapse the session into one text block for lightweight request checks."""
+    """Combine prior messages and the current request into routeable text.
+
+    Args:
+        conversation_history: Prior chat messages with role and content fields.
+        message: Current user message to append to the history.
+
+    Returns:
+        str: Plain-text context with the current request clearly labeled.
+    """
     history_text = _serialize_conversation(conversation_history)
     if not history_text:
         return message
-    return f"{history_text}\n {message}"
- # f"Past messages: {history_text}\nNew user message: {message}"
+    return f"{history_text}\nNew user message: {message}"
 
 
 def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> str:
-    """Serialize chat history into a compact plain-text transcript."""
+    """Serialize usable chat history into a compact plain-text transcript.
+
+    Args:
+        conversation_history: Messages containing optional role and content keys.
+
+    Returns:
+        str: Newline-delimited transcript excluding blank messages.
+    """
     lines: List[str] = []
     for item in conversation_history:
         role = str(item.get("role", "user")).strip() or "user"
@@ -348,11 +372,19 @@ def _serialize_conversation(conversation_history: Iterable[Dict[str, str]]) -> s
         if not content:
             continue
         lines.append(f"{role}: {content}")
-    return "\n".join(lines) if lines else "No previous conversation."
+    return "\n".join(lines)
 
 
 def _is_supported_specialist_request(text: str) -> bool:
-    """Return True when Julius can route the request to its current specialists."""
+    """Determine whether a request can be routed to current specialists.
+
+    Args:
+        text: User request or compiled conversation context to classify.
+
+    Returns:
+        bool: ``True`` when a supported domain or general research request is
+        detected; otherwise ``False``.
+    """
     normalized = text.casefold()
     if any(keyword in normalized for keyword in _SUPPORTED_PR_ST_KEYWORDS):
         return True
@@ -374,7 +406,15 @@ def _is_supported_specialist_request(text: str) -> bool:
 
 
 def _is_supported_specialist_request_with_llm(text: str) -> bool:
-    """Use an LLM fallback to decide whether Julius can serve the request."""
+    """Use deterministic or model-based fallback routing for a request.
+
+    Args:
+        text: Request whose relationship to supported domains is uncertain.
+
+    Returns:
+        bool: Whether the fallback considers the request in scope. API failures
+        are treated as unsupported requests.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         normalized = text.casefold()
@@ -412,19 +452,24 @@ def _is_supported_specialist_request_with_llm(text: str) -> bool:
     content = (response.output_text or "").strip().casefold()
     return content == "yes"
 
-# note: test as-is, otherwise update to assess if message is about math/ai OR move that information in the allocation topic tool
-# @function_tool(name_override="get_field_family_tool")
-# def get_field_family_tool(agent_name: str) -> Dict[str, str]:
-#     """Identify whether a specialist belongs to the mathematics or AI family."""
-#     return {"agent_name": agent_name, "family": family_for_agent(agent_name).value}
-
-
 @function_tool(name_override="allocate_topics_tool")
 def allocate_topics_tool(
     message: str,
     available_agents: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Allocate the requested number of topics across JuliusAgent's specialists."""
+    """Allocate a request's topic budget across available specialists.
+
+    Args:
+        message: Full user request used to infer domains and topic count.
+        available_agents: Optional subset of supported specialist names.
+
+    Returns:
+        Dict[str, Any]: Allocation payload with capped topic counts, reasoning,
+        and fallback routing order.
+
+    Raises:
+        RuntimeError: If no usable allocation is returned by the model.
+    """
     agent_order = [agent for agent in (available_agents or list(_SUPPORTED_AGENT_ORDER)) if agent in _SUPPORTED_AGENT_ORDER]
     if not agent_order:
         agent_order = list(_SUPPORTED_AGENT_ORDER)
@@ -434,8 +479,8 @@ def allocate_topics_tool(
     requested_topic_count = payload.get("requested_topic_count")
     if not isinstance(requested_topic_count, int):
         requested_topic_count = sum(item["topic_count"] for item in allocations)
-    if requested_topic_count <= 0:
-        requested_topic_count = DEFAULT_MAX_TOPICS
+    requested_topic_count = max(1, min(requested_topic_count, DEFAULT_MAX_TOPICS))
+    allocations = _cap_allocations(allocations, requested_topic_count)
 
     return {
         "status": "success",
@@ -447,7 +492,19 @@ def allocate_topics_tool(
 
 
 def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str, Any]:
-    """Use an LLM to decide which specialists to call and how many topics each should cover."""
+    """Ask the model to select specialists and their topic counts.
+
+    Args:
+        message: User request that defines the desired coverage.
+        agent_order: Supported specialist names allowed in the allocation.
+
+    Returns:
+        Dict[str, Any]: Parsed allocation object returned by the model.
+
+    Raises:
+        RuntimeError: If no API key, model response, or valid JSON object is
+            available.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for allocate_topics_tool")
@@ -482,7 +539,7 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
         "- If the user provides an allocation, you must meet the given allocation. In particular you are prohibited to allocate less.\n"
         "- The total number of topics you allocate must be greater or equal to the total number of topics required by the user.\n"
         "- If you can infer the total number of topics requested by the user, you must be satisfy that number.\n"
-        "- If you cannot find out the total number of topics requested by the user, assume it is 5."
+        "- If you cannot find out the total number of topics requested by the user, assume it is 3.\n"
         "- Return JSON only with this schema:\n"
         "{"
         "\"requested_topic_count\": <int>, "
@@ -508,7 +565,19 @@ def _allocate_topics_with_llm(message: str, agent_order: List[str]) -> Dict[str,
 
 
 def _normalize_allocation_payload(payload: Dict[str, Any], agent_order: List[str]) -> List[Dict[str, Any]]:
-    """Normalize LLM allocation output into JuliusAgent's expected tool payload."""
+    """Normalize model allocation data into delegate-tool payloads.
+
+    Args:
+        payload: Raw model JSON containing candidate allocations.
+        agent_order: Ordered allowlist of eligible specialist names.
+
+    Returns:
+        List[Dict[str, Any]]: Valid, unique allocations with tool names and
+        default reasons filled in.
+
+    Raises:
+        RuntimeError: If the allocation field is invalid or has no usable item.
+    """
     raw_allocations = payload.get("allocations") or []
     if not isinstance(raw_allocations, list):
         raise RuntimeError("allocate_topics_tool must return a list of allocations")
@@ -540,8 +609,43 @@ def _normalize_allocation_payload(payload: Dict[str, Any], agent_order: List[str
     return normalized_allocations
 
 
+def _cap_allocations(
+    allocations: List[Dict[str, Any]],
+    requested_topic_count: int,
+) -> List[Dict[str, Any]]:
+    """Trim allocations so delegation never exceeds the requested budget.
+
+    Args:
+        allocations: Normalized specialist allocations in routing order.
+        requested_topic_count: Maximum combined topic count to retain.
+
+    Returns:
+        List[Dict[str, Any]]: Allocations shortened or removed after the budget
+        is exhausted.
+    """
+    remaining = requested_topic_count
+    capped: List[Dict[str, Any]] = []
+    for allocation in allocations:
+        if remaining == 0:
+            break
+        topic_count = min(int(allocation["topic_count"]), remaining)
+        capped.append({**allocation, "topic_count": topic_count})
+        remaining -= topic_count
+    return capped
+
+
 def _agent_tool_name(agent_name: str) -> str:
-    """Return the JuliusAgent tool name associated with a specialist."""
+    """Return the delegation tool registered for a specialist.
+
+    Args:
+        agent_name: Canonical specialist name.
+
+    Returns:
+        str: JuliusAgent tool name that invokes the specialist.
+
+    Raises:
+        KeyError: If ``agent_name`` has no registered delegation tool.
+    """
     mapping = {
         "ChrisAgent": "chris_agent_tool",
         "AlainAgent": "alain_agent_tool",
@@ -555,7 +659,14 @@ def _agent_tool_name(agent_name: str) -> str:
 
 
 def _allocation_reason(agent_name: str) -> str:
-    """Explain why a specialist received topic allocation. Default reason if a proper reason cannot be found"""
+    """Provide a default explanation for allocating work to a specialist.
+
+    Args:
+        agent_name: Canonical specialist name to explain.
+
+    Returns:
+        str: Domain-specific allocation rationale or a general fallback reason.
+    """
     if agent_name == "ChrisAgent":
         return "Interest in probability or statistics detected."
     if agent_name == "AlainAgent":
@@ -580,12 +691,23 @@ def editorial_one_pager_tool(
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
-    """
-    Synthesize specialist outputs into a one-pager draft.
+    """Synthesize specialist outputs into an audience-specific one-pager draft.
 
-    This tool is responsible for adapting the tone and structure to the target
-    audience and for turning specialist results into a coherent editorial brief.
-    Example = specialized_agent_input = '{"ChrisAgent": [...], "MichelAgent": {...}}'
+    Args:
+        specialized_agent_input: JSON string or compatible handoff containing
+            specialist findings and optional explanation feedback.
+        requested_topic_count: Maximum number of topics to include in the draft.
+        title: Editorial title to use when the model does not supply one.
+        audience: Intended readership for structure and language choices.
+        tone: Desired editorial voice for the draft.
+
+    Returns:
+        Dict[str, Any]: Parsed editorial draft with default status and content
+        fields supplied when absent.
+
+    Raises:
+        RuntimeError: If no API key, a model failure, empty output, or invalid
+        JSON prevents the draft from being produced.
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -636,7 +758,16 @@ def editorial_one_pager_tool(
 
 
 def _normalize_editorial_handoff(specialized_agent_input: Any) -> Dict[str, Any]:
-    """Normalize specialist handoff data into one dictionary payload."""
+    """Normalize JSON, mappings, or mapping collections into one handoff.
+
+    Args:
+        specialized_agent_input: Serialized JSON, a mapping, or iterable of
+        mappings containing specialist results.
+
+    Returns:
+        Dict[str, Any]: Single dictionary suitable for editorial prompting;
+        malformed strings are retained as ``raw_input``.
+    """
     if isinstance(specialized_agent_input, str):
         raw = specialized_agent_input.strip()
         if not raw:
@@ -663,7 +794,21 @@ def finalize_editorial_one_pager_tool(
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
-    """Finalize a one-pager draft using MichelAgent's editorial suggestions."""
+    """Finalize a draft after incorporating MichelAgent's feedback.
+
+    Args:
+        one_pager: Latest editorial draft to revise or approve.
+        michel_agent_feedback: Simplification and accessibility feedback.
+        audience: Intended readers for the finalized version.
+        tone: Desired editorial voice for the finalized version.
+
+    Returns:
+        Dict[str, Any]: Finalization decision, rationale, content, and metadata.
+
+    Raises:
+        RuntimeError: If no API key, a model failure, empty output, or invalid
+        JSON prevents finalization.
+    """
     prompt = (
         "You are finalizing an editorial one-pager.\n"
         "Review the draft and take into account MichelAgent feedbacks, especially when the target audience is made of non-experts (e.g. a general audience)\n"
@@ -717,7 +862,21 @@ def revise_one_pager_tool(
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
-    """Assess whether a one-pager fits the requested tone and audience."""
+    """Assess whether a one-pager fits its intended audience and tone.
+
+    Args:
+        one_pager: Draft to evaluate for editorial fit.
+        audience: Intended readers used to judge appropriateness.
+        tone: Requested editorial voice used to judge appropriateness.
+
+    Returns:
+        Dict[str, Any]: Assessment status, issue type, recommendation, and the
+        reviewed draft metadata.
+
+    Raises:
+        RuntimeError: If no API key, a model failure, empty output, or invalid
+        JSON prevents the assessment.
+    """
     prompt = (
         "You are reviewing a one-pager draft.\n"
         "Judge whether it matches the requested tone and audience.\n"
@@ -767,7 +926,14 @@ def revise_one_pager_tool(
 
 @function_tool(name_override="extract_date_range_tool")
 def extract_date_range_tool(message: str) -> Dict[str, Any]:
-    """Tool wrapper that extracts an ISO date range from the user message."""
+    """Extract a normalized ISO date range from a user request.
+
+    Args:
+        message: User text that may contain explicit or relative dates.
+
+    Returns:
+        Dict[str, Any]: Mapping containing ISO ``start_date`` and ``end_date``.
+    """
     start_date, end_date = _extract_date_range(message)
     return {
         "start_date": start_date,
@@ -776,77 +942,30 @@ def extract_date_range_tool(message: str) -> Dict[str, Any]:
 
 
 def _extract_date_range(message: str) -> tuple[str, str]:
-    extracted = _extract_date_range_with_llm(message)
-    if extracted:
-        start_raw = extracted.get("start_date")
-        end_raw = extracted.get("end_date")
-        try:
-            start = _parse_iso_date(str(start_raw))
-            end = _parse_iso_date(str(end_raw)) if end_raw else datetime.now()
-        except (ValueError, TypeError):
-            pass
-        else:
-            if start > end:
-                start, end = end, start
-            return start.date().isoformat(), end.date().isoformat()
-    end = datetime.now()
-    start = end - timedelta(days=DEFAULT_LOOKBACK_DAYS)
-    return start.date().isoformat(), end.date().isoformat()
+    """Delegate date parsing to the shared specialist date-range parser.
 
+    Args:
+        message: User text that may contain explicit or relative dates.
 
-def _parse_iso_date(value: str) -> datetime:
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f"Invalid date '{value}'. Use YYYY-MM-DD.") from exc
-
-def _extract_date_range_with_llm(message: str) -> Dict[str, Optional[str]]:
-    """Use an LLM to extract ISO date bounds from a user message."""
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-    today = datetime.now().date()
-    day_name = today.strftime("%A")
-    month_name = today.strftime("%B")
-    prompt = (
-        "You are a specialist in finding dates of all format.\n"
-        "Extract an explicit date range from the user message.\n"
-        "Return JSON only with this exact schema: "
-        "{\"start_date\":\"YYYY-MM-DD or null\",\"end_date\":\"YYYY-MM-DD or null\"}.\n"
-        f"Today is {day_name}, {month_name} {today.day}, {today.year}.\n"
-        "#Rule:#\n"
-        f"- Read *very carefully* the message. \n"
-        f"- if there is a relative date, then end_date is {today.isoformat()}\n"
-        "- if there is not any date intent in the message, then return null for start_date and end_date\n"
-        f"#User message:\n {message}"
-    )
-    response = client.responses.create(
-        model=model,
-        input=prompt,
-        temperature=0,
-    )
-    content = (response.output_text or "").strip()
-    if not content:
-        return {
-            "start_date": None,
-            "end_date": None,
-        }
-
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
-        return {
-            "start_date": None,
-            "end_date": None,
-        }
-
-    return {
-        "start_date": payload.get("start_date"),
-        "end_date": payload.get("end_date"),
-    }
+    Returns:
+        tuple[str, str]: Inclusive ISO start and end dates.
+    """
+    return extract_specialist_date_range(message)
 
 
 def _parse_json_object_response(content: str, tool_name: str) -> Dict[str, Any]:
-    """Parse a JSON object even when the model wraps it in fences or short prose."""
+    """Parse a JSON object from plain, fenced, or prose-wrapped model output.
+
+    Args:
+        content: Raw model response that should contain a JSON object.
+        tool_name: Tool name included in validation errors.
+
+    Returns:
+        Dict[str, Any]: First valid JSON object found in ``content``.
+
+    Raises:
+        RuntimeError: If no valid JSON object can be extracted.
+    """
     candidates = [content.strip()]
 
     fenced_matches = re.findall(r"```(?:json)?\s*(.*?)\s*```", content, flags=re.IGNORECASE | re.DOTALL)
@@ -872,7 +991,14 @@ def _parse_json_object_response(content: str, tool_name: str) -> Dict[str, Any]:
 
 
 def _extract_first_json_object(content: str) -> Optional[str]:
-    """Return the first balanced JSON object substring found in free-form text."""
+    """Find the first balanced JSON object in free-form response text.
+
+    Args:
+        content: Text that may contain a JSON object among other prose.
+
+    Returns:
+        Optional[str]: Balanced JSON-object substring, or ``None`` if absent.
+    """
     start = content.find("{")
     while start != -1:
         depth = 0
@@ -902,7 +1028,14 @@ def _extract_first_json_object(content: str) -> Optional[str]:
 
 
 def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:
-    """Extract function-tool call arguments from SDK run items."""
+    """Extract function-tool names and arguments from SDK run items.
+
+    Args:
+        new_items: Items emitted during an OpenAI Agents SDK run.
+
+    Returns:
+        List[Dict[str, Any]]: One tool-and-arguments mapping per function call.
+    """
     extracted: List[Dict[str, Any]] = []
     for item in new_items:
         raw_item = getattr(item, "raw_item", None)

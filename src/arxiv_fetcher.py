@@ -75,7 +75,7 @@ class ArxivFetcher:
         request_delay: float = 3.0,
         max_retries: int = 3,
         retry_delay: float = 5.0,
-    ):
+    ) -> None:
         """
         Initialize the ArxivFetcher.
 
@@ -84,6 +84,9 @@ class ArxivFetcher:
                           ArXiv recommends at least 3 seconds.
             max_retries: Maximum number of retry attempts for failed requests.
             retry_delay: Delay between retry attempts (seconds).
+
+        Returns:
+            None: The new fetcher stores normalized rate-limit settings.
         """
         self.request_delay = max(request_delay, 3.0)  # Minimum 3 seconds per ArXiv guidelines
         self.max_retries = max_retries
@@ -91,7 +94,11 @@ class ArxivFetcher:
         self._last_request_time: Optional[float] = None
 
     def _wait_for_rate_limit(self) -> None:
-        """Enforce rate limiting between API requests."""
+        """Pause as needed to keep requests within the configured rate limit.
+
+        Returns:
+            None: Updates the timestamp used to throttle the next request.
+        """
         if self._last_request_time is not None:
             elapsed = time.time() - self._last_request_time
             if elapsed < self.request_delay:
@@ -271,6 +278,9 @@ class ArxivFetcher:
 
         Returns:
             List of unique Paper objects across all categories.
+
+        Raises:
+            Exception: If an unexpected error escapes a category fetch.
         """
         all_papers: List[Paper] = []
         seen_ids: set = set()
@@ -683,6 +693,12 @@ class ArxivFetcher:
 
         Returns:
             Paper content as markdown text.
+
+        Raises:
+            PDFDownloadError: If source processing fails and the fallback PDF
+                cannot be downloaded.
+            PDFExtractionError: If source processing fails and fallback PDF text
+                cannot be extracted.
         """
         try:
             source_bytes = self.fetch_paper_source(paper_id)
@@ -739,7 +755,15 @@ class ArxivFetcher:
         return pdf_path, text
 
     def _extract_latex_documents(self, source_bytes: bytes) -> dict[str, str]:
-        """Return decoded LaTeX documents from raw ArXiv source bytes."""
+        """Extract decoded LaTeX documents from an arXiv source payload.
+
+        Args:
+            source_bytes: Raw e-print archive, gzip stream, or text source.
+
+        Returns:
+            dict[str, str]: File names mapped to decoded LaTeX document text;
+            empty when no usable document is found.
+        """
         documents: dict[str, str] = {}
 
         try:
@@ -767,7 +791,15 @@ class ArxivFetcher:
         return documents
 
     def _iter_text_source_candidates(self, source_bytes: bytes) -> list[tuple[str, str]]:
-        """Yield plausible decoded text payloads from raw or gzipped source bytes."""
+        """Decode plausible text-source candidates from raw or gzip bytes.
+
+        Args:
+            source_bytes: Raw e-print response to inspect for text content.
+
+        Returns:
+            list[tuple[str, str]]: Synthetic file names and decoded candidate
+            text, excluding PDF payloads.
+        """
         candidates = [("source.tex", source_bytes)]
 
         if source_bytes[:2] == b"\x1f\x8b":
@@ -785,7 +817,17 @@ class ArxivFetcher:
         return decoded_candidates
 
     def _select_main_latex_document(self, documents: dict[str, str]) -> tuple[str, str]:
-        """Choose the most likely main LaTeX file from a source archive."""
+        """Choose the most likely main LaTeX document from a source archive.
+
+        Args:
+            documents: Decoded LaTeX documents keyed by archive filename.
+
+        Returns:
+            tuple[str, str]: Selected filename and its LaTeX content.
+
+        Raises:
+            SourceExtractionError: If no usable main document can be selected.
+        """
         best_name = ""
         best_content = ""
         best_score = -1
@@ -814,7 +856,15 @@ class ArxivFetcher:
         return best_name, best_content
 
     def _latex_to_markdown(self, latex_text: str) -> str:
-        """Convert a subset of LaTeX into readable markdown."""
+        """Convert supported LaTeX structure and inline syntax to markdown.
+
+        Args:
+            latex_text: Source text from a selected LaTeX document.
+
+        Returns:
+            str: Cleaned markdown containing available title, author, abstract,
+            and body content.
+        """
         text = latex_text.replace("\r\n", "\n").replace("\r", "\n")
         text = re.sub(r"(?<!\\)%.*", "", text)
 
@@ -844,7 +894,14 @@ class ArxivFetcher:
         return self._cleanup_markdown("\n\n".join(part for part in markdown_parts if part))
 
     def _convert_latex_structure_to_markdown(self, text: str) -> str:
-        """Convert structural LaTeX commands into markdown markers."""
+        """Convert structural LaTeX commands into markdown markers.
+
+        Args:
+            text: LaTeX text whose sections, lists, and equations are converted.
+
+        Returns:
+            str: Text with supported structural commands expressed as markdown.
+        """
         replacements = (
             (r"\\section\*?\{([^{}]+)\}", r"\n\n## \1\n\n"),
             (r"\\subsection\*?\{([^{}]+)\}", r"\n\n### \1\n\n"),
@@ -868,7 +925,15 @@ class ArxivFetcher:
         return text
 
     def _latex_block_to_text(self, text: str) -> str:
-        """Best-effort conversion of LaTeX text blocks into markdown-friendly text."""
+        """Best-effort conversion of LaTeX text blocks to markdown-friendly text.
+
+        Args:
+            text: LaTeX block containing inline markup and commands.
+
+        Returns:
+            str: Text with supported inline formatting preserved and unsupported
+            commands removed.
+        """
         converted = text
 
         inline_patterns = (
@@ -909,7 +974,14 @@ class ArxivFetcher:
         return converted
 
     def _plain_text_to_markdown(self, text: str) -> str:
-        """Normalize extracted plain text into lightweight markdown paragraphs."""
+        """Normalize extracted plain text into lightweight markdown paragraphs.
+
+        Args:
+            text: Raw text extracted from a fallback PDF.
+
+        Returns:
+            str: Cleaned paragraphs with recognized headings promoted to markdown.
+        """
         lines = [line.strip() for line in text.splitlines()]
         paragraphs: list[str] = []
         current_paragraph: list[str] = []
@@ -936,7 +1008,15 @@ class ArxivFetcher:
         return self._cleanup_markdown("\n\n".join(paragraphs))
 
     def _extract_latex_command_argument(self, text: str, command: str) -> str:
-        """Extract a simple command argument like \\title{...}."""
+        """Extract a simple LaTeX command argument such as ``\\title{...}``.
+
+        Args:
+            text: LaTeX source to search.
+            command: Command name without the leading backslash.
+
+        Returns:
+            str: Trimmed command argument, or an empty string when absent.
+        """
         match = re.search(
             rf"\\{command}\*?(?:\[[^\]]*\])?\{{(.*?)\}}",
             text,
@@ -945,7 +1025,15 @@ class ArxivFetcher:
         return match.group(1).strip() if match else ""
 
     def _extract_latex_environment(self, text: str, environment: str) -> str:
-        """Extract the contents of a LaTeX environment."""
+        """Extract the text contained in a named LaTeX environment.
+
+        Args:
+            text: LaTeX source to search.
+            environment: Environment name without ``begin`` or ``end`` syntax.
+
+        Returns:
+            str: Trimmed environment body, or an empty string when absent.
+        """
         match = re.search(
             rf"\\begin\{{{environment}\}}(.*?)\\end\{{{environment}\}}",
             text,
@@ -954,11 +1042,25 @@ class ArxivFetcher:
         return match.group(1).strip() if match else ""
 
     def _latex_inline_to_text(self, text: str) -> str:
-        """Convert inline LaTeX to text and collapse extra whitespace."""
+        """Convert inline LaTeX to text and collapse surplus whitespace.
+
+        Args:
+            text: Inline LaTeX fragment to normalize.
+
+        Returns:
+            str: Trimmed, markdown-friendly inline text.
+        """
         return re.sub(r"\s+", " ", self._latex_block_to_text(text)).strip()
 
     def _cleanup_markdown(self, text: str) -> str:
-        """Normalize whitespace and trim noisy blank lines in markdown output."""
+        """Normalize whitespace and trim noisy blank lines in markdown output.
+
+        Args:
+            text: Markdown content to clean.
+
+        Returns:
+            str: Trimmed markdown with normalized spaces and blank lines.
+        """
         cleaned = re.sub(r"[ \t]+\n", "\n", text)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)

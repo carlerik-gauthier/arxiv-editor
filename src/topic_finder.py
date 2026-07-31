@@ -1,15 +1,24 @@
-import openai
+"""Topic modelling for persisted arXiv paper metadata.
+
+The public :func:`compute_topics` function intentionally imports the expensive
+BERTopic stack lazily. This keeps agent construction and unit tests fast, and
+only requires the modelling dependencies when a topic extraction is requested.
+"""
+
+from __future__ import annotations
+
 import os
-import tiktoken
+from pathlib import Path
+from typing import Any
+
+import openai
 import pandas as pd
-from copy import deepcopy
+import tiktoken
 from dotenv import load_dotenv
-from typing import List
-from src.data_object import Paper
 
 load_dotenv(override=True)
 
-summarization_prompt = """
+SUMMARY_PROMPT = """
 I have a topic that is described by the following keywords: [KEYWORDS]
 In this topic, the following documents are a small but representative subset of all documents in the topic:
 [DOCUMENTS]
@@ -18,8 +27,7 @@ Based on the information above, give a concise description of this topic in the 
 topic: <description>
 """
 
-
-topic_title_prompt = """
+TITLE_PROMPT = """
 I have a topic that contains the following documents:
 [DOCUMENTS]
 The topic is described by the following keywords: [KEYWORDS]
@@ -27,104 +35,219 @@ The topic is described by the following keywords: [KEYWORDS]
 Based on the information above, extract a short topic label in the following format:
 topic: <topic label>
 """
-# FIX papers to paper_path; and papers is now a pandas dataframe
-def compute_topics(path: str, n_topics: int=1, n_papers_per_topic: int=3):
+
+REQUIRED_COLUMNS = frozenset({"arxiv_id", "title", "summary"})
+
+
+def compute_topics(
+    path: str | Path,
+    n_topics: int = 1,
+    n_papers_per_topic: int = 3,
+) -> list[dict[str, Any]]:
+    """Cluster paper titles and abstracts into representative research topics.
+
+    Args:
+        path: CSV file created by the specialist paper-fetching workflow.
+        n_topics: Maximum number of non-outlier clusters to return.
+        n_papers_per_topic: Maximum number of representative papers per cluster.
+
+    Returns:
+        Topic dictionaries containing a label, description, paper count, and
+        representative arXiv IDs and titles.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+        ValueError: If metadata is invalid or does not provide enough papers to
+            build meaningful clusters.
+    """
+    csv_path = Path(path)
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"Paper metadata CSV not found: {csv_path}")
+
+    topic_limit = _positive_count(n_topics, "n_topics")
+    paper_limit = _positive_count(n_papers_per_topic, "n_papers_per_topic")
+    data = pd.read_csv(csv_path)
+    missing_columns = REQUIRED_COLUMNS.difference(data.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"Paper metadata CSV is missing required columns: {missing}")
+
+    data = data.dropna(subset=["arxiv_id", "title", "summary"]).copy()
+    if len(data) < 2:
+        raise ValueError("At least two papers with titles and summaries are required for topic extraction.")
+    data["document"] = data["title"].astype(str) + " -- " + data["summary"].astype(str)
+    documents = data["document"].tolist()
+
+    topic_model = _build_topic_model()
+    labels, probabilities = topic_model.fit_transform(documents)
+    data["topic"] = labels
+    data["probability"] = _confidence_scores(probabilities, len(data))
+
+    topic_info = topic_model.get_topic_info()
+    selected_topics = topic_info[topic_info["Topic"] != -1].nlargest(topic_limit, "Count").copy()
+    if selected_topics.empty:
+        return []
+    selected_topics.rename(columns={"Topic": "topic", "Count": "nb_papers"}, inplace=True)
+
+    representatives = _representative_papers(data, selected_topics["topic"].tolist(), paper_limit)
+    results: list[dict[str, Any]] = []
+    for _, row in selected_topics.iterrows():
+        topic_id = row["topic"]
+        papers = representatives.get(topic_id, [])
+        if not papers:
+            continue
+        results.append(
+            {
+                "topic_title": _topic_text(row.get("topic_title_"), fallback=f"Topic {topic_id}"),
+                "nb_papers": int(row["nb_papers"]),
+                "topic_description": _topic_text(
+                    row.get("topic_summary_"),
+                    fallback="A cluster of closely related arXiv papers.",
+                ),
+                "representative_papers_arxiv_id": [paper["arxiv_id"] for paper in papers],
+                "representative_papers_title": [paper["title"] for paper in papers],
+            }
+        )
+    return results
+
+
+def _build_topic_model() -> Any:
+    """Build BERTopic with semantic embeddings and OpenAI label generators.
+
+    Returns:
+        Any: Configured BERTopic model ready to fit paper documents.
+
+    Raises:
+        ImportError: If optional BERTopic or embedding dependencies are missing.
+        Exception: If the configured OpenAI or model dependencies cannot be
+            initialized.
+    """
     from bertopic import BERTopic
+    from bertopic.representation import KeyBERTInspired, MaximalMarginalRelevance
     from bertopic.representation import OpenAI as OpenAIRepresentation
-    from bertopic.representation import MaximalMarginalRelevance, KeyBERTInspired
     from sentence_transformers import SentenceTransformer
 
-    data = pd.read_csv(path)
-    data['docs'] = data[["title", "summary"]].apply(
-        lambda arr: f"{arr[0]} -- {arr[1]}", raw=True, axis=1
-        )
-    docs = list(data['docs'].values)
-    api_key = os.getenv('OPENAI_API_KEY')
-    client = openai.OpenAI(api_key=api_key)
-    tokenizer= tiktoken.encoding_for_model("gpt-4o-mini")
-    main_representation = KeyBERTInspired()
-    topic_summary_representation_model = [
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    tokenizer = tiktoken.encoding_for_model("gpt-4o-mini")
+    summary_representation = [
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
             client,
-            model="gpt-4o-mini",
-            prompt=summarization_prompt,
+            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-4o-mini"),
+            prompt=SUMMARY_PROMPT,
             chat=True,
             nr_docs=10,
             doc_length=2000,
             diversity=0.3,
-            tokenizer=tokenizer
-            )
-            ]
-    
-    topic_title_representation_model = [
+            tokenizer=tokenizer,
+        ),
+    ]
+    title_representation = [
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
             client,
-            model="gpt-4o-mini",
-            prompt=topic_title_prompt,
+            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-4o-mini"),
+            prompt=TITLE_PROMPT,
             chat=True,
             nr_docs=10,
             doc_length=200,
             diversity=0.3,
-            tokenizer=tokenizer
-            )
-            ]
-    
-    representation_models = {
-        "Main": main_representation,
-        "topic_summary_": topic_summary_representation_model,
-        "topic_title_": topic_title_representation_model
-    }
-    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            tokenizer=tokenizer,
+        ),
+    ]
+    return BERTopic(
+        embedding_model=SentenceTransformer("all-MiniLM-L6-v2"),
+        representation_model={
+            "Main": KeyBERTInspired(),
+            "topic_summary_": summary_representation,
+            "topic_title_": title_representation,
+        },
+    )
 
-    # uses default parameter of Bertopic for dimension reduction and clustering
-    topic_model = BERTopic(
-        embedding_model=embedding_model,
-        representation_model=representation_models
-        )
-    
-    topic_model.fit(docs)
-    
-    label, prob = topic_model.transform(docs) # fit_transform(docs)
-    data['topic'] = label
-    data['probability'] = prob
-    # get topic info and keep top n_topics
-    topic_info_base = topic_model.get_topic_info()
 
-    topic_info_base = deepcopy(topic_info_base[topic_info_base.Topic!=-1]).sort_values(by="Count", ascending=False)
-    topic_info = topic_info_base.head(n_topics)
-    topic_info.reset_index(drop=True, inplace=True)
-    topic_info.rename(columns={"Topic": "topic"}, inplace=True)
-    # find the most representative papers defined as the top n paper per topic
-    # df = pd.DataFrame(data={
-        # "arxiv_id": [p.arxiv_id for p in papers],
-    #     "paper": papers,
-    #     "topic": label,
-    #     "probabilities": prob
-    # })
+def _positive_count(value: int, parameter_name: str) -> int:
+    """Validate and return a strictly positive integer parameter.
 
-    paper_topic_df = data.merge(topic_info[["topic"]], how="inner", on="topic")
-    paper_topic_df['rk'] = paper_topic_df.sort_values('probability', ascending=False) \
-             .groupby(by='topic') \
-             .cumcount() + 1
-    paper_topic_df = deepcopy(paper_topic_df[paper_topic_df.rk<=n_papers_per_topic]).reset_index(drop=True)
-    representative_papers = paper_topic_df[["topic", "arxiv_id"]].groupby(by="topic")['arxiv_id'].apply(list).reset_index()
-    representative_papers_title = paper_topic_df[["topic", "title"]].groupby(by="topic")['title'].apply(list).reset_index()
-    # combine all infos to return a list of dictionaries. The list length is equal to n_topics and 
-    # dictionaries are like
-    # {
-    #     "topic_title": <title of the topic>,
-    #     "nb_papers": <size of the topic>,
-    #     "topic_description": <a brief description about the content of the topic>,
-    #     "representative_papers": <a list of length n_papers_per_topic of Paper object>
-    # }
-    final_df = topic_info.merge(representative_papers, on="topic", how="inner")
-    final_df = deepcopy(final_df).merge(representative_papers_title, on="topic", how="inner")
-    final_df["topic_description"] = final_df["topic_summary_"].apply(lambda arr: arr[0])
-    final_df["topic_title"] = final_df["topic_title_"].apply(lambda arr: arr[0])
-    #return final_df, paper_topic_df, representative_papers
-    final_df = deepcopy(final_df[["topic_title", "Count", "topic_description", "arxiv_id", "title"]]).rename(
-        columns={"Count": "nb_papers", "arxiv_id": "representative_papers_arxiv_id", "title": "representative_papers_title"})
-    
-    return final_df.to_dict("records")
+    Args:
+        value: Candidate count to validate.
+        parameter_name: Parameter name used in the validation message.
+
+    Returns:
+        int: The validated positive integer.
+
+    Raises:
+        ValueError: If ``value`` is a boolean, non-integer, or less than one.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{parameter_name} must be a positive integer.")
+    return value
+
+
+def _confidence_scores(probabilities: Any, expected_count: int) -> list[float]:
+    """Convert BERTopic confidence output into one sortable score per paper.
+
+    Args:
+        probabilities: BERTopic confidence values, potentially scalar-like or
+            matrix-like per paper.
+        expected_count: Number of scores required to align with paper rows.
+
+    Returns:
+        list[float]: One numeric score per expected paper, or zero scores when
+        the model output cannot be aligned.
+    """
+    if probabilities is None:
+        return [0.0] * expected_count
+    scores: list[float] = []
+    for probability in probabilities:
+        if hasattr(probability, "max"):
+            probability = probability.max()
+        try:
+            scores.append(float(probability))
+        except (TypeError, ValueError):
+            scores.append(0.0)
+    return scores if len(scores) == expected_count else [0.0] * expected_count
+
+
+def _representative_papers(
+    data: pd.DataFrame,
+    topic_ids: list[int],
+    paper_limit: int,
+) -> dict[int, list[dict[str, str]]]:
+    """Select the highest-confidence representative papers per topic.
+
+    Args:
+        data: Paper dataframe containing topic, probability, ID, and title.
+        topic_ids: Selected non-outlier topic identifiers.
+        paper_limit: Maximum representative papers to retain for each topic.
+
+    Returns:
+        dict[int, list[dict[str, str]]]: Topic IDs mapped to ordered paper ID
+        and title dictionaries.
+    """
+    candidates = data[data["topic"].isin(topic_ids)].sort_values(
+        ["topic", "probability"], ascending=[True, False]
+    )
+    candidates = candidates.groupby("topic", sort=False).head(paper_limit)
+    grouped: dict[int, list[dict[str, str]]] = {}
+    for topic_id, papers in candidates.groupby("topic", sort=False):
+        grouped[int(topic_id)] = [
+            {"arxiv_id": str(paper.arxiv_id), "title": str(paper.title)}
+            for paper in papers.itertuples(index=False)
+        ]
+    return grouped
+
+
+def _topic_text(value: Any, fallback: str) -> str:
+    """Normalize BERTopic label formats into a readable non-empty string.
+
+    Args:
+        value: Label value returned by BERTopic, possibly a sequence or empty.
+        fallback: Text returned when ``value`` has no usable content.
+
+    Returns:
+        str: Trimmed label text or ``fallback``.
+    """
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    text = str(value or "").strip()
+    return text or fallback

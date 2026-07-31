@@ -8,7 +8,11 @@ from src.julius_agent import run_julius_agent
 
 
 def run_app() -> None:
-    """Run a session-memory chat against JuliusAgent and Phase 8 specialists."""
+    """Render and run the Phase 8 full-specialist chat interface.
+
+    Returns:
+        None: Renders the interface and updates session-state messages.
+    """
     st.set_page_config(page_title="Phase 8 - Mathematics & AI", page_icon="🧭", layout="wide")
     st.title("Phase 8: Mathematics & AI ArXiv Workflow")
     st.caption("Ask for a research brief in mathematics, machine learning, data science, NLP, LLMs, or agentic AI.")

@@ -8,11 +8,21 @@ from src.chris_agent_phase1 import run_chris_agent
 
 
 def _init_state() -> None:
+    """Initialize the current session's chat transcript when absent.
+
+    Returns:
+        None: Creates an empty ``messages`` list in Streamlit session state.
+    """
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
 
 def run_app() -> None:
+    """Render and run the Phase 1 ChrisAgent chat interface.
+
+    Returns:
+        None: Renders the interface and updates session-state messages.
+    """
     st.set_page_config(page_title="Phase 1 - ChrisAgent", page_icon="📘", layout="wide")
     st.title("Phase 1: ChrisAgent (Probability/Statistics)")
     st.caption("Chat memory is stored in this session.")

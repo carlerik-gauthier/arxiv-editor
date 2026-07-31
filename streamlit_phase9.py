@@ -8,7 +8,11 @@ from src.julius_agent import run_julius_agent
 
 
 def run_app() -> None:
-    """Run a session-memory chat with the personality-aware specialist team."""
+    """Render and run the Phase 9 personality-aware chat interface.
+
+    Returns:
+        None: Renders the interface and updates session-state messages.
+    """
     st.set_page_config(page_title="Phase 9 - Personality-Aware Briefs", page_icon="🎭", layout="wide")
     st.title("Phase 9: Personality-Aware ArXiv Workflow")
     st.caption(

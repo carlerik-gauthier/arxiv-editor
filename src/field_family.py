@@ -17,7 +17,17 @@ AI_AGENTS = frozenset({"AbdoulayeAgent", "JeanBaptisteAgent"})
 
 
 def family_for_agent(agent_name: str) -> FieldFamily:
-    """Return the research family represented by a specialist agent."""
+    """Map a specialist agent name to its top-level research family.
+
+    Args:
+        agent_name: Canonical name of a configured specialist agent.
+
+    Returns:
+        FieldFamily: Mathematics or AI family represented by ``agent_name``.
+
+    Raises:
+        ValueError: If ``agent_name`` is not a configured specialist.
+    """
     if agent_name in MATHEMATICS_AGENTS:
         return FieldFamily.MATHEMATICS
     if agent_name in AI_AGENTS:

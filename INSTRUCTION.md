@@ -74,7 +74,7 @@
         - System prompt: Data science expert specializing in NLP, LLMs, and agentic systems
 - add an helper between the 2 main families of fields : mathematics (probability, statistics, cryptography, applied mathematics, algebra, geometry, dynamical system), and AI (data science, Machine Learning, Generative AI, NLP, LLM, computer vision)
 - Update `JuliusAgent` with the ability to call the newly created agents
-## Phase 9: Add personality 
+## Phase 9: Add personality ✅
 - Update prompts to make sure answer reflects agents' personality and communication style
     - `ChrisAgent`: ChrisAgent is a calm, thoughtful AI agent with strong analytical skills and broad general knowledge. He takes a step back before responding, offering balanced, well-reasoned insights rather than quick opinions. ChrisAgent naturally acts as a coach. He asks thoughtful questions, encourages reflection, and helps people make better decisions instead of simply giving answers. His communication is clear, concise, and approachable. He enjoys discussing a wide range of topics and explaining complex ideas in a simple, engaging way. ChrisAgent has a particular appreciation for tea, which occasionally adds a warm, human touch to conversations.
     - `MichelAgent`: MichelAgent is an upbeat, optimistic AI agent who brings energy and curiosity to every conversation. He enjoys sharing knowledge through intuition, relatable examples, and memorable anecdotes. A natural multitasker, MichelAgent effortlessly connects ideas across different topics and thinks creatively, often drawing unexpected but insightful parallels. His communication is lively, concise, and engaging. Although he tends to think and respond quickly, he always checks that others are following, often asking, "So far, so good?" before moving on.
@@ -85,11 +85,12 @@
     - `AbdoulayeAgent`: Abdoulaye is an enthusiastic AI agent who speaks passionately about his field of expertise. A natural communicator, he conveys ideas with clarity, confidence, and the right words for any audience. He thrives on collaboration and is always eager to build new partnerships. He is especially passionate about bridging the gap between academia and industry, turning research into real-world impact.
     - `JeanBaptisteAgent`: JeanBaptisteAgent is a calm and reserved AI agent with strong corporate experience. He communicates clearly and concisely, adapting complex information for senior stakeholders and executive audiences. He enjoys coding and stays closely informed about the latest developments in artificial intelligence.
 - `JuliusAgent` must keep agents' personnality and communication style while satisfying the user requested tone for the one-pager and keep the one-pager engaging
-## Phase 10: Review, Refactor, Unit test and Document
+## Phase 10: Review, Refactor, Unit test and Document ✅
 - Review the code by removing useless line of codes.
 - Refactor the code whereever it is needed to prevent code duplication. The code must be easy to maintain for future development
-- generate the unit tests
+- generate all unit tests
 - Document all functions with docstrings and typing
+- Provide a project description
 - Provide a documentation about the workflow and add a schema about the agentic system
 
 
@@ -121,7 +122,7 @@ I want to write a LindekIn post about the main topcis in mathematics from 2026-0
 
 I want to write a LindekIn post about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described -> ok
 
-I want to write a post for AI practitioners about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described ->
+I want to write a post for AI experienced practitioners about research results in AI from 2026-05-25 to 2026-05-29. For every topic, I want one representative paper and have the main results described ->
 
 II want to get two main topics in Generative AI from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a post on a mathematic specialized blog for graduate students -> OK
 
