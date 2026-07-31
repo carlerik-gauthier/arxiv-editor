@@ -2,6 +2,12 @@
 
 A multi-agent system for generating comprehensive one-pagers about the latest research news from ArXiv. The system features specialized agents named after great researchers, each focusing on specific domains.
 
+## Experimentation outcome
+
+**This branch is the result of the experiment to let coding agents Claude and Codex design the steps and implement the code** with minimal amount of manual intervention.
+
+The result is: the code works and outputs something. HOWEVER, it does not behave as intented since it is not using LLMs. Instead, implementation relies on deterministic approaches. Several hours of debugging helps to insert LLM calls. Nevertheless, the **behavior remains to be not the expected one**!
+
 ## Agents
 
 - **Julius** (Julius Springer) - Editor & Coordinator
