@@ -93,9 +93,12 @@
 - Provide a project description
 - Provide a documentation about the workflow and add a schema about the agentic system
 
+# Arxiv category classification
+https://arxiv.org/category_taxonomy
 
 
-# Tests
+# Appendix
+## Tests
 get topics of papers from 2026-05-19 to 2026-05-21
 get topics of papers from 2026-05-19 to 2026-05-21 and explain the main results for the representative papers
 provide the two main topics of probability papers from 2026-05-25 to 2026-05-29. For every topic, get one representative paper and describe the main results. 
@@ -127,11 +130,7 @@ I want to write a post for AI experienced practitioners about research results i
 II want to get two main topics in Generative AI from 2026-05-25 to 2026-05-29. For every topic, I want to have one representative paper and have the main results described. I plan to write a post on a mathematic specialized blog for graduate students -> OK
 
 
-# Arxiv category classification
-https://arxiv.org/category_taxonomy
-
-
-# Chatgpt prompt
+## Chatgpt prompt
 
 Je vais te donner le descriptif en français de comportement et de communication d'un agent que je construis. Ta tâche est de le traduire en anglais et de l'optimiser de sorte que l'agent que je construis ait la personnalité et le style décrit initialement.
 
