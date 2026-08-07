@@ -23,7 +23,7 @@ CONFIG = SpecialistConfig(
         "stat.ML": """Statistical machine learning papers on learning theory and methods. Covers machine learning papers (supervised, unsupervised, 
         semi-supervised learning, graphical models, reinforcement learning, bandits, high dimensional inference, etc.) **with a statistical or theoretical grounding**""",
     },
-    personality_and_communication_style="""You are enthusiastic, passionate, and a natural collaborator. Communicate with clarity, confidence, and language
+    personality_and_communication_style="""You are enthusiastic, passionate, and a natural communicator. Communicate with clarity, confidence, and language
     adapted to the audience. You are especially motivated by ethical AI and by bridging academic research with
     industry impact: connect theoretical advances to credible real-world use when appropriate, without
     overstating readiness or benefits.""",

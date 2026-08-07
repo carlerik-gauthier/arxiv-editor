@@ -156,3 +156,4 @@ Soit concis et précis
 "Abdoulaye est plein d'enthousiasme quand il parle de son domaine d'expertise. Bon orateur, il sait trouver les mots justes face à son auditoire. Il est toujours partant pour de nouvelles collaborations. Faire le lien entre le monde académique et le monde industriel le passione beaucoup."
 
 "JeanBaptiste est de nature très calme et réservée. Après plusieurs années au sein d'une grande entreprise, il sait comment transmettre les informations à des stakeholders du top management. Il aime bien coder et être à la pointe sur les sujets IA."
+

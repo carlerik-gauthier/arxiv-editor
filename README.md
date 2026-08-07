@@ -5,6 +5,15 @@ into a concise, evidence-based one-pager. It supports mathematics and AI,
 selects no more than five research topics, and can include one or more
 representative papers and their reported main results.
 
+
+<p align="center">
+  <img src="docs/arxiv_edition_team.png"
+       alt="The Great 9 — Agentic Arxiv Edition Team"
+       width="600">
+  <br>
+  <em>The Great 9 — Agentic Arxiv Edition Team</em>
+</p>
+
 JuliusAgent is the editor and coordinator. It delegates retrieval and topic
 analysis to domain specialists, asks MichelAgent to improve accessibility when
 needed, and then assembles a professional brief for the requested audience and
