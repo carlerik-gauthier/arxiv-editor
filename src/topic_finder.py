@@ -165,12 +165,12 @@ def _build_topic_model(personality: str, communication_style: str) -> Any:
     from sentence_transformers import SentenceTransformer
 
     client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    tokenizer = tiktoken.encoding_for_model("gpt-5.4-nano")
+    tokenizer = tiktoken.encoding_for_model("gpt-4o-mini")
     summary_representation = [
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
             client,
-            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-5.4-nano"),
+            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-4o-mini"),
             prompt=SUMMARY_PROMPT.format(personality=personality, communication_style=communication_style),
             chat=True,
             nr_docs=10,
@@ -183,7 +183,7 @@ def _build_topic_model(personality: str, communication_style: str) -> Any:
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
             client,
-            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-5.4-nano"),
+            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-4o-mini"),
             prompt=TITLE_PROMPT.format(personality=personality, communication_style=communication_style),
             chat=True,
             nr_docs=10,
