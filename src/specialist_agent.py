@@ -25,7 +25,7 @@ DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_OUTPUT_DIR = Path("data/paper")
 DEFAULT_PDF_OUTPUT_DIR = Path("data/pdfs")
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.4-nano"
 ISO_DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 
 TOPIC_SCHEMA = """{
@@ -144,6 +144,8 @@ def create_specialist_tools(config: SpecialistConfig) -> SpecialistToolSet:
     @function_tool(name_override="find_topic_tool")
     def find_topic_tool(
         csv_path: str,
+        personality: str,
+        communication_style: str,
         n_topics: int = DEFAULT_MAX_TOPICS,
         n_papers_per_topic: int = 3,
     ) -> Dict[str, Any]:
@@ -151,13 +153,15 @@ def create_specialist_tools(config: SpecialistConfig) -> SpecialistToolSet:
 
         Args:
             csv_path: Path to specialist paper metadata in CSV form.
+            personality: A brief description of the personality to use.
+            communication_style: The style to use to generate the description.
             n_topics: Maximum number of topics to return.
             n_papers_per_topic: Maximum representative papers per topic.
 
         Returns:
             Dict[str, Any]: Success or failure payload with extracted topics.
         """
-        return find_topics(csv_path, n_topics, n_papers_per_topic)
+        return find_topics(csv_path, personality, communication_style, n_topics, n_papers_per_topic)
 
     @function_tool(name_override="extract_main_result_tool")
     def extract_main_result_tool(
@@ -285,11 +289,18 @@ def fetch_papers(
     }
 
 
-def find_topics(csv_path: str, n_topics: int = DEFAULT_MAX_TOPICS, n_papers_per_topic: int = 3) -> Dict[str, Any]:
+def find_topics(csv_path: str,
+                personality: str,
+                communication_style: str,
+                n_topics: int = DEFAULT_MAX_TOPICS,
+                n_papers_per_topic: int = 3
+                ) -> Dict[str, Any]:
     """Extract up to five topics from persisted paper metadata.
 
     Args:
         csv_path: Existing paper-metadata CSV to analyze.
+        personality: A brief description of the personality to use.
+        communication_style: The style to use to generate the description.
         n_topics: Requested maximum topic count, capped at five.
         n_papers_per_topic: Maximum representative papers per topic.
 
@@ -297,11 +308,15 @@ def find_topics(csv_path: str, n_topics: int = DEFAULT_MAX_TOPICS, n_papers_per_
         Dict[str, Any]: Success payload with topics or a recoverable failure
         payload when the CSV is absent or topic extraction fails.
     """
+    if personality.strip() == '':
+        personality = "professional"
+    if communication_style.strip() == '':
+        communication_style = "clear and concise"
     path = Path(csv_path)
     if not path.exists():
         return {"status": "failure", "reason": f"CSV file not found: {csv_path}", "topics": []}
     try:
-        topics = compute_topics(str(path), max(1, min(n_topics, DEFAULT_MAX_TOPICS)), max(1, n_papers_per_topic))
+        topics = compute_topics(str(path), personality, communication_style, max(1, min(n_topics, DEFAULT_MAX_TOPICS)), max(1, n_papers_per_topic))
     except Exception as exc:
         return {"status": "failure", "reason": f"Topic extraction failed: {exc}", "topics": []}
     return {"status": "success", "reason": f"Extracted {len(topics)} topics from {csv_path}.", "topics": topics}
@@ -457,9 +472,10 @@ def build_specialist_agent(config: SpecialistConfig, tools: List[FunctionTool]) 
             "Pass the requested ISO date range and the inferred categories. Leave `min_threshold` at its default unless "
             "the user explicitly requests another threshold. If it fails because too few papers were found, do not "
             "invent topics or papers: report the reason to JuliusAgent.\n"
-            "4. Call `find_topic_tool(csv_path, n_topics, n_papers_per_topic)` only with a CSV path returned by the "
-            "check or fetch tool. Set `n_topics` to the number assigned by JuliusAgent, capped at five. Set "
-            "`n_papers_per_topic` to the requested number of representative papers, or one when unspecified.\n"
+            "4. Call `find_topic_tool(csv_path, personalit, communication_style, n_topics, n_papers_per_topic)` only"
+            "with a CSV path returned by the check or fetch tool. Set `n_topics` to the number assigned by JuliusAgent," 
+            "capped at five. Provide your personality to 'personality' and precise your communication style with 'communication_style'."
+            "Set `n_papers_per_topic` to the requested number of representative papers, or one when unspecified.\n"
             "5. Call `extract_main_result_tool(arxiv_id, title)` only when the user requests main results. Use the exact "
             "arXiv ID and title of each selected representative paper. Preserve a failure response rather than making "
             "up a result.\n\n"
@@ -467,7 +483,7 @@ def build_specialist_agent(config: SpecialistConfig, tools: List[FunctionTool]) 
             "paper count, and representative papers. Include `main_result` only when it was requested. "
             f"Return valid JSON in this schema: {{\"{config.name}\": [{TOPIC_SCHEMA}]}}. "
             "Return exactly the requested number of topics when enough data exists, never more than five. "
-            "The content of your output must reflect your personality and communication style."
+            "The style used for topic title, topic description and main results must meet your personality and communication style."
 
         ),
         tools=tools,

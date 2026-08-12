@@ -74,14 +74,15 @@ JULIUS_SYSTEM_PROMPT = (
     "- When you call ChrisAgent or AlainAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
     "- When you call MichelAgent, pass the exact concept or draft text that needs to be made clearer.\n"
-    "- Do not create clarity, intuition, or metaphor material yourself; delegate it to MichelAgent.\n"
+    "- When pedagogical explanation is needed, call MichelAgent for review.\n"
+    "- Your are prohibited from providing clarity, intuition, or metaphor material yourself; you must delegate it to MichelAgent.\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
     "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
     "- If the request is outside the supported mathematics and AI specialties, reply politely and state the supported scope.\n"
 )
 
 DEFAULT_MAX_TOPICS = 5
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.4-nano" # "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 20
 
 
@@ -255,14 +256,24 @@ def build_julius_agent() -> Agent:
         "If the user has not specified an audience, assume LinkedIn.\n"
         "If the user has not specified a tone, assume professional.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
-        "When calling `editorial_one_pager_tool`, provide the specialist outputs serialized as a JSON string, the requested topic count, \n"
-        "and an appealing title, the target audience and the tone to use.\n"
+        "When calling `editorial_one_pager_tool`, you must provide the outputs of **all** specialized agents that have been called serialized as a JSON string, the requested topic count\n"
+        "and an appealing title, the target audience and the tone to use. Remember, **all specialized agents** that got allocated topics MUST be provided!\n"
         "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent feedback, the tone and targeted audience.\n"
         "When calling `allocate_topics_tool`, pass the full user request so the allocation can reflect the domain mix and requested number of topics.\n"
-        "When delegating to ChrisAgent, include the date range, inferred categories, topic count, audience, tone, "
-        "and whether main results are required.\n"
-        "When delegating to AlainAgent, include the date range, inferred categories, topic count, audience, tone, "
-        "and whether main results are required.\n"
+        f"When using 'chris_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic to collect, the audience, the tone,\n"
+        "and and whether main results are required.\n"
+        f"When using 'alain_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the nnumber of allocated topic to collect, the audience, the tone,\n"
+        "and and whether main results are required.\n"
+        f"When using 'abdoulaye_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic to collect, the audience, the tone,\n"
+        "and and whether main results are required.\n"
+        f"When using 'bruno_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic to collect, the audience, the tone,\n"
+        "and and whether main results are required.\n"
+        f"When using 'elisa_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic to collect, the audience, the tone,\n"
+        "and and whether main results are required.\n"
+        f"When using 'felix_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic to collect, the audience, the tone,\n"
+        "and and whether main results are required.\n"
+        f"When using 'jean_baptiste_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic count, the audience, the tone,\n"
+        "and and whether main results are required.\n"
         "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
         "If you delegated to MichelAgent, you must use `finalize_editorial_one_pager_tool` to finalize the one-pager with MichelAgent's feedbacks\n"
         "MichelAgent's feedbacks must be considered if you call `michel_agent_tool`"
@@ -686,7 +697,7 @@ def _allocation_reason(agent_name: str) -> str:
 
 @function_tool(name_override="editorial_one_pager_tool")
 def editorial_one_pager_tool(
-    specialized_agent_input: str,
+    specialized_agent_inputs: str,
     requested_topic_count: int,
     title: str="ArXiv Research Brief",
     audience: str = "LinkedIn",
@@ -695,7 +706,7 @@ def editorial_one_pager_tool(
     """Synthesize specialist outputs into an audience-specific one-pager draft.
 
     Args:
-        specialized_agent_input: JSON string or compatible handoff containing
+        specialized_agent_inputs: JSON string or compatible handoff containing
             specialist findings and optional explanation feedback.
         requested_topic_count: Maximum number of topics to include in the draft.
         title: Editorial title to use when the model does not supply one.
@@ -714,14 +725,15 @@ def editorial_one_pager_tool(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for editorial_one_pager_tool")
 
-    payload = _normalize_editorial_handoff(specialized_agent_input)
+    payload = _normalize_editorial_handoff(specialized_agent_inputs)
 
     prompt = (
         f"You are an editorial assistant for a one-pager called {title}.\n"
         "Use the specialist handoff to select the best topics, decide whether general-audience "
         "explanation, vulgarization, intuition, or metaphors are needed, and write a coherent first draft.\n"
+        f"Your first draft must satisfy the following format : {EXPECTED_FORMAT_OUTPUT_RULE}.\n"
         "Return JSON only with keys: status, title, topic_count, "
-        "editorial_summary, content.\n"
+        "editorial_summary, content, one_pager_draft.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
         "**NEVER change** the paper titles nor the links to ArXiv\n"

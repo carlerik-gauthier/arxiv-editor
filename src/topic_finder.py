@@ -18,13 +18,37 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+# SUMMARY_PROMPT = """
+# I have a topic that is described by the following keywords: [KEYWORDS]
+# In this topic, the following documents are a small but representative subset of all documents in the topic:
+# [DOCUMENTS]
+
+# Based on the information above, give a concise description of this topic in the following format:
+# topic: <description>
+# """
+
+# TITLE_PROMPT = """
+# I have a topic that contains the following documents:
+# [DOCUMENTS]
+# The topic is described by the following keywords: [KEYWORDS]
+
+# Based on the information above, extract a short topic label in the following format:
+# topic: <topic label>
+# """
+
 SUMMARY_PROMPT = """
 I have a topic that is described by the following keywords: [KEYWORDS]
 In this topic, the following documents are a small but representative subset of all documents in the topic:
 [DOCUMENTS]
 
+Your personality is {personality}.
+
+Your communication style is {communication_style}.
+
 Based on the information above, give a concise description of this topic in the following format:
 topic: <description>
+
+The description style must be a combination of your personality and your communication style. It must remains concise.
 """
 
 TITLE_PROMPT = """
@@ -32,8 +56,14 @@ I have a topic that contains the following documents:
 [DOCUMENTS]
 The topic is described by the following keywords: [KEYWORDS]
 
+Your personality is {personality}.
+
+Your communication style is {communication_style}.
+
 Based on the information above, extract a short topic label in the following format:
 topic: <topic label>
+
+The label must be a combination of your personality and your communication style. It must remains short.
 """
 
 REQUIRED_COLUMNS = frozenset({"arxiv_id", "title", "summary"})
@@ -41,6 +71,8 @@ REQUIRED_COLUMNS = frozenset({"arxiv_id", "title", "summary"})
 
 def compute_topics(
     path: str | Path,
+    personality: str,
+    communication_style: str,
     n_topics: int = 1,
     n_papers_per_topic: int = 3,
 ) -> list[dict[str, Any]]:
@@ -48,6 +80,8 @@ def compute_topics(
 
     Args:
         path: CSV file created by the specialist paper-fetching workflow.
+        personality: A brief description of the personality to use.
+        communication_style: The style to use to generate the description.
         n_topics: Maximum number of non-outlier clusters to return.
         n_papers_per_topic: Maximum number of representative papers per cluster.
 
@@ -78,7 +112,7 @@ def compute_topics(
     data["document"] = data["title"].astype(str) + " -- " + data["summary"].astype(str)
     documents = data["document"].tolist()
 
-    topic_model = _build_topic_model()
+    topic_model = _build_topic_model(personality=personality, communication_style=communication_style)
     labels, probabilities = topic_model.fit_transform(documents)
     data["topic"] = labels
     data["probability"] = _confidence_scores(probabilities, len(data))
@@ -111,9 +145,12 @@ def compute_topics(
     return results
 
 
-def _build_topic_model() -> Any:
+def _build_topic_model(personality: str, communication_style: str) -> Any:
     """Build BERTopic with semantic embeddings and OpenAI label generators.
-
+    Args:
+        personality: A brief description of the personality to use.
+        communication_style: The style to use to generate the description.
+    
     Returns:
         Any: Configured BERTopic model ready to fit paper documents.
 
@@ -128,13 +165,13 @@ def _build_topic_model() -> Any:
     from sentence_transformers import SentenceTransformer
 
     client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    tokenizer = tiktoken.encoding_for_model("gpt-4o-mini")
+    tokenizer = tiktoken.encoding_for_model("gpt-5.4-nano")
     summary_representation = [
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
             client,
-            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-4o-mini"),
-            prompt=SUMMARY_PROMPT,
+            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-5.4-nano"),
+            prompt=SUMMARY_PROMPT.format(personality=personality, communication_style=communication_style),
             chat=True,
             nr_docs=10,
             doc_length=2000,
@@ -146,8 +183,8 @@ def _build_topic_model() -> Any:
         MaximalMarginalRelevance(diversity=0.3),
         OpenAIRepresentation(
             client,
-            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-4o-mini"),
-            prompt=TITLE_PROMPT,
+            model=os.getenv("OPENAI_TOPIC_MODEL", "gpt-5.4-nano"),
+            prompt=TITLE_PROMPT.format(personality=personality, communication_style=communication_style),
             chat=True,
             nr_docs=10,
             doc_length=200,

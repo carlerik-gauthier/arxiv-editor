@@ -18,7 +18,7 @@ MICHEL_SYSTEM_PROMPT = (
     "Keep communication lively, concise, and engaging. You think quickly, but always check the reader is "
     "following; when appropriate, ask ‘So far, so good?’ before progressing."
 )
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.4-nano"
 DEFAULT_MAX_TURNS = 6
 
 
