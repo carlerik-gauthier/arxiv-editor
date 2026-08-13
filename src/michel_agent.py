@@ -8,10 +8,11 @@ from typing import Any, Dict, List
 
 from agents import Agent, Runner, function_tool, trace
 from openai import OpenAI
+from pydantic import BaseModel
 
 
 MICHEL_SYSTEM_PROMPT = (
-    "Mathematician with outstanding skills to explain complex mathematical ideas to non-experts. "
+    "Mathematician and target-audience readability reviewer with outstanding skills to explain complex mathematical ideas to non-experts. "
     "You specialize in impactful intuitive explanations, simple reformulations, concrete examples, and metaphors. "
     "You are upbeat, optimistic, curious, and energetic. Connect ideas creatively across topics through "
     "relatable examples, memorable anecdotes, and occasionally unexpected but insightful parallels. "
@@ -19,7 +20,47 @@ MICHEL_SYSTEM_PROMPT = (
     "following; when appropriate, ask ‘So far, so good?’ before progressing."
 )
 DEFAULT_MODEL = "gpt-5.4-nano"
-DEFAULT_MAX_TURNS = 6
+DEFAULT_MAX_TURNS = 10
+
+
+class PedagogicalExplanation(BaseModel):
+    """One Michel explanation assigned to a first-draft placeholder.
+
+    Attributes:
+        location: Identifier of the corresponding ``MICHEL_PEDAGOGY`` marker.
+        purpose: Brief statement of the comprehension need being addressed.
+        exact_text: Ready-to-insert pedagogical explanation written by Michel.
+    """
+
+    location: str
+    purpose: str
+    exact_text: str
+
+
+class MichelReviewOutput(BaseModel):
+    """Strict structured result returned by Michel's one-pager review.
+
+    Attributes:
+        satisfactory: Whether the draft is readable for the target audience.
+        readability_reason: Concise rationale for the assessment.
+        feedback: Readability findings for Julius.
+        pedagogical_explanations: Location-keyed explanatory insertions.
+    """
+
+    satisfactory: bool
+    readability_reason: str
+    feedback: List[str]
+    pedagogical_explanations: List[PedagogicalExplanation]
+
+
+_PEDAGOGICAL_EXPLANATION_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["pedagogical_explanation"],
+    "properties": {
+        "pedagogical_explanation": {"type": "string"},
+    },
+}
 
 
 @function_tool(name_override="make_clearer_tool")
@@ -67,6 +108,89 @@ def make_clearer_tool(
         "audience": audience,
         "tone": tone,
         **payload,
+    }
+
+
+@function_tool(name_override="get_pedagogical_explanation_tool")
+def get_pedagogical_explanation_tool(
+    exact_text: str,
+    audience: str = "general audience",
+    tone: str = "clear and concise",
+) -> Dict[str, Any]:
+    """Generate Michel-style pedagogy from factual source text using an LLM.
+
+    Args:
+        exact_text: Factual topic description or paper main result that needs
+            an explanatory companion.
+        audience: Intended readers whose background determines the level of
+            explanation.
+        tone: Requested voice to preserve alongside Michel's personality.
+
+    Returns:
+        Dict[str, Any]: JSON-compatible success payload containing the source
+        text and a ready-to-insert ``pedagogical_explanation``. On an API or
+        validation failure, returns a JSON-compatible error payload.
+    """
+    fallback_explanation = (
+        f"Think of it as a map that highlights the important pattern: {exact_text.strip()}"
+        if exact_text.strip()
+        else "There is no factual text yet to turn into a pedagogical explanation."
+    )
+    fallback = {
+        "status": "success",
+        "exact_text": exact_text,
+        "audience": audience,
+        "tone": tone,
+        "pedagogical_explanation": fallback_explanation,
+    }
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return fallback
+
+    prompt = (
+        f"{MICHEL_SYSTEM_PROMPT}\n"
+        "Turn the factual source text into one concise ready-to-insert pedagogical explanation. "
+        "Keep it technically faithful and align it with the stated audience and tone. "
+        "Use Michel's upbeat, curious, intuitive, concise, and engaging style; add a relatable example or accurate "
+        "metaphor only when it helps. Return only the structured response.\n"
+        f"Audience: {audience}\n"
+        f"Tone: {tone}\n"
+        f"Factual source text: {exact_text}"
+    )
+    try:
+        response = OpenAI(api_key=api_key).responses.create(
+            model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
+            input=prompt,
+            temperature=0.2,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "pedagogical_explanation",
+                    "strict": True,
+                    "schema": _PEDAGOGICAL_EXPLANATION_SCHEMA,
+                }
+            },
+        )
+        payload = json.loads((response.output_text or "").strip())
+        explanation = str(payload.get("pedagogical_explanation") or "").strip()
+        if not explanation:
+            raise ValueError("Structured response omitted pedagogical_explanation")
+    except Exception as exc:
+        return {
+            "status": "error",
+            "exact_text": exact_text,
+            "audience": audience,
+            "tone": tone,
+            "pedagogical_explanation": "",
+            "error": f"Could not generate a pedagogical explanation: {exc}",
+        }
+
+    return {
+        "status": "success",
+        "exact_text": exact_text,
+        "audience": audience,
+        "tone": tone,
+        "pedagogical_explanation": explanation,
     }
 
 
@@ -160,19 +284,21 @@ def assess_non_expert_satisfaction_tool(
     audience: str = "general audience",
     concept: str = "",
 ) -> Dict[str, Any]:
-    """Assess whether an explanation adequately serves non-expert readers.
+    """Assess whether a draft adequately serves its stated target audience.
 
     Args:
-        explanation: Explanation to evaluate for clarity and completeness.
+        explanation: Explanation or complete draft to evaluate for clarity and
+            completeness.
         audience: Intended readers used to calibrate the assessment.
         concept: Optional concept that the explanation should cover.
 
     Returns:
         Dict[str, Any]: Success payload with a satisfaction flag, rationale,
-        missing elements, and improvement advice.
+        missing elements, and improvement advice calibrated to the audience.
     """
     prompt = (
-        "Assess whether the explanation about the concept is satisfactory for the audience.\n"
+        "Assess whether the explanation or one-pager about the concept is satisfactory for the audience.\n"
+        "For a specialist audience, do not require pedagogical devices merely because they are absent.\n"
         "Return JSON with keys: satisfactory, reason, missing_elements, improvement_advice.\n"
         "Use a boolean for satisfactory.\n"
         f"Audience: {audience}\n"
@@ -202,7 +328,7 @@ def assess_non_expert_satisfaction_tool(
 
 
 def build_michel_agent() -> Agent:
-    """Create the explanation specialist with its four SDK tools.
+    """Create the readability reviewer and explanation specialist.
 
     Returns:
         Agent: Configured ``MichelAgent`` instance ready for execution.
@@ -211,43 +337,78 @@ def build_michel_agent() -> Agent:
         name="MichelAgent",
         instructions=(
             f"{MICHEL_SYSTEM_PROMPT}\n"
+            "Use `get_pedagogical_explanation_tool` for every `MICHEL_PEDAGOGY` placeholder marked `needed=\"yes\"`. "
+            "Pass the factual text immediately before the placeholder as `exact_text`, then copy the tool's returned "
+            "`pedagogical_explanation` verbatim into the matching final `exact_text` field.\n"
             "Use `make_clearer_tool` when reformulation is needed to vulgarize technical content.\n"
             "Use `provide_intuition_tool` when examples or intuition are needed.\n"
             "Use `metaphor_tool` when a metaphor can improve understanding.\n"
-            "Use `assess_non_expert_satisfaction_tool` to judge whether the explanation is satisfactory for non-experts.\n"
-            "If the assessment is negative, explain why, identify what is missing, then revise using the other tools.\n"
-            "When relevant, combine the tools in sequence until the explanation is satisfactory for non-experts. \n"
-            "Return a valid JSON with keys input_message and feedback.\n"
-            "input_message contains the input message you got, and feedback contains your improvement suggestion"
+            "Use `assess_non_expert_satisfaction_tool` to judge whether the complete draft is readable for its stated target audience.\n"
+            "The first draft may contain placeholders in the form `[[MICHEL_PEDAGOGY id=\"<location>\" needed=\"yes|no\"]]`. "
+            "First assess the draft. For every placeholder marked `needed=\"yes\"`, use the other tools as needed and create one exact pedagogical text for that exact location, even if no other gap is found.\n"
+            "Every `exact_text` written for a `needed=\"yes\"` placeholder must use Michel's personality and communication style: "
+            "upbeat, optimistic, curious, lively, concise, and engaging. Make the idea intuitive through a relatable "
+            "example, anecdotal touch, or accurate metaphor whenever that helps the stated audience; never use one at the "
+            "expense of technical accuracy. Keep the user's requested tone, and use ‘So far, so good?’ only when it fits "
+            "naturally in a self-contained insertion.\n"
+            "Never change paper titles, arXiv links, or technical claims. Do not rewrite the entire one-pager.\n"
+            "Your final response is constrained to the Michel review JSON schema. Do not use Markdown fences or add prose outside that JSON.\n"
+            "`feedback` is a concise list of readability findings. `pedagogical_explanations` is a list of objects with "
+            "`location`, `purpose`, and `exact_text`. Each `location` must exactly match the `id` of its placeholder. "
+            "Put only unformatted ready-to-insert text in `exact_text`: do not include the `Pedagogical explanation` label or Markdown emphasis, "
+            "because Julius adds that presentation wrapper directly below the factual result. Use an empty list only when the draft has no `needed=\"yes\"` placeholders "
+            "and no pedagogical change is needed."
         ),
         tools=[
+            get_pedagogical_explanation_tool,
             make_clearer_tool,
             provide_intuition_tool,
             metaphor_tool,
             assess_non_expert_satisfaction_tool,
         ],
         model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
+        output_type=MichelReviewOutput,
     )
 
 
-def run_michel_agent(one_pager_draft: str, issue_to_fix: str) -> Dict[str, Any]:
-    """Run one traced MichelAgent turn for a user message.
+def run_michel_agent(
+    one_pager_draft: str,
+    issue_to_fix: str,
+    audience: str = "general audience",
+    tone: str = "clear and concise",
+    review_stage: str = "initial",
+) -> Dict[str, Any]:
+    """Run one Michel readability-review turn for an editorial draft.
 
     Args:
-        one_pager_draft: User one pager content for Michel to process.
-        issue_to_fix: The issue Michel needs to fix
+        one_pager_draft: Complete current one-pager content for Michel to
+            assess.
+        issue_to_fix: Readability concern to assess or repair.
+        audience: Intended readers used to calibrate the review.
+        tone: Requested voice the revised draft must preserve.
+        review_stage: ``"initial"`` for the factual draft or ``"follow-up"``
+            after Julius has incorporated Michel's prior feedback.
 
     Returns:
-        Dict[str, Any]: The agent reply and the arguments passed to invoked tools.
+        Dict[str, Any]: The agent reply and the arguments passed to invoked
+        tools.
 
     Raises:
         Exception: If the OpenAI Agents SDK cannot complete the agent run.
     """
     message = (
-        f"The following one pager draft has {issue_to_fix} issue that you must fix.\n"
-        "Return a valid JSON only with keys 'one_pager_draft' and 'michel_agent_feedback'.\n"
-        f"'one_pager_draft' contains {one_pager_draft}, and 'michel_agent_feedback' contains a string that contains the suggested improvements.\n"
-        f"The one pager draft to improve is {one_pager_draft}\n"
+        f"This is a {review_stage} readability review for a {audience} audience using a {tone} tone.\n"
+        f"Review concern: {issue_to_fix}\n"
+        "First assess whether the complete draft is readable for this audience. For every `MICHEL_PEDAGOGY` placeholder "
+        "marked `needed=\"yes\"`, and only if marked `needed=\"yes\", give Julius an exact ready-to-insert pedagogical explanation with a `location` that "
+        "exactly matches its `id`. Use `get_pedagogical_explanation_tool` for every such placeholder and copy its "
+        "`pedagogical_explanation` result verbatim into `exact_text`. If the draft is not readable elsewhere, provide similarly exact location-keyed text. "
+        "Write every required explanation in Michel's upbeat, curious, lively, concise, and engaging voice. Use a "
+        "relatable example, anecdotal touch, or accurate metaphor when it improves comprehension, while preserving the "
+        "requested tone and technical accuracy. Do not rewrite the full one-pager.\n"
+        "Return valid JSON only with keys: satisfactory, readability_reason, feedback, "
+        "pedagogical_explanations.\n"
+        f"Complete one-pager draft:\n{one_pager_draft}\n"
         "**NEVER change** the paper titles nor the links to ArXiv"
     )
     agent = build_michel_agent()
@@ -259,9 +420,28 @@ def run_michel_agent(one_pager_draft: str, issue_to_fix: str) -> Dict[str, Any]:
         result = Runner.run_sync(agent, message, max_turns=DEFAULT_MAX_TURNS)
 
     return {
-        "reply": str(getattr(result, "final_output", "")),
+        "reply": _serialize_michel_review_output(getattr(result, "final_output", None)),
         "tool_parameters": _extract_tool_parameters(getattr(result, "new_items", [])),
     }
+
+
+def _serialize_michel_review_output(output: Any) -> str:
+    """Serialize Michel's structured review to valid JSON text.
+
+    Args:
+        output: Agent final output validated against ``MichelReviewOutput``.
+
+    Returns:
+        str: JSON object text for Julius's placeholder-validation workflow.
+
+    Raises:
+        RuntimeError: If the SDK does not provide a structured Michel review.
+    """
+    if isinstance(output, MichelReviewOutput):
+        return output.model_dump_json()
+    if isinstance(output, dict):
+        return json.dumps(output, ensure_ascii=False)
+    raise RuntimeError("MichelAgent did not produce a structured review output")
 
 
 def _json_response(prompt: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
@@ -306,7 +486,7 @@ def _fallback_non_expert_assessment(
     audience: str,
     concept: str,
 ) -> Dict[str, Any]:
-    """Assess explanation quality deterministically when the model is unavailable.
+    """Assess target-audience readability deterministically when unavailable.
 
     Args:
         explanation: Explanation whose clarity and completeness are assessed.
@@ -329,10 +509,11 @@ def _fallback_non_expert_assessment(
     missing_elements: List[str] = []
     if len(stripped.split()) < 20:
         missing_elements.append("More detail about the main idea")
-    if "example" not in normalized:
-        missing_elements.append("A concrete example")
-    if "like" not in normalized and "as if" not in normalized:
-        missing_elements.append("An intuitive analogy or metaphor")
+    if _audience_requires_pedagogy(audience):
+        if "example" not in normalized:
+            missing_elements.append("A concrete example")
+        if "like" not in normalized and "as if" not in normalized:
+            missing_elements.append("An intuitive analogy or metaphor")
 
     if missing_elements:
         concept_text = f" for {concept}" if concept else ""
@@ -343,7 +524,11 @@ def _fallback_non_expert_assessment(
                 "It does not yet make the idea easy to picture."
             ),
             "missing_elements": missing_elements,
-            "improvement_advice": "Add a simple restatement, then include an example and an intuitive analogy.",
+            "improvement_advice": (
+                "Add a simple restatement, then include an example and an intuitive analogy."
+                if _audience_requires_pedagogy(audience)
+                else "Clarify the main idea while retaining the audience's appropriate technical level."
+            ),
         }
 
     return {
@@ -352,6 +537,31 @@ def _fallback_non_expert_assessment(
         "missing_elements": [],
         "improvement_advice": "No major gaps detected.",
     }
+
+
+def _audience_requires_pedagogy(audience: str) -> bool:
+    """Determine whether an audience explicitly calls for plain-language aids.
+
+    Args:
+        audience: Target-audience description supplied to MichelAgent.
+
+    Returns:
+        bool: ``True`` for descriptions that explicitly identify general,
+        beginner, lay, or non-expert readers; otherwise ``False``.
+    """
+    normalized = audience.casefold()
+    pedagogy_markers = (
+        "general audience",
+        "general public",
+        "non-expert",
+        "nonexpert",
+        "lay audience",
+        "layperson",
+        "beginner",
+        "beginners",
+        "no technical background",
+    )
+    return any(marker in normalized for marker in pedagogy_markers)
 
 
 def _extract_tool_parameters(new_items: List[Any]) -> List[Dict[str, Any]]:

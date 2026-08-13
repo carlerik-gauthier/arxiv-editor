@@ -28,9 +28,10 @@ flowchart TD
     W --> CSV[Cached paper metadata CSV]
     CSV --> T[BERTopic topic extraction]
     W --> R[Paper source/PDF and main-result extraction]
-    T & R --> J
-    J --> MI[Michel: clarity, intuition and metaphors]
-    MI --> J
+    T & R --> DRAFT[Julius: factual first draft]
+    DRAFT --> MI[Michel: target-audience readability review]
+    MI --> J[Julius: incorporate Michel-supplied explanations]
+    J --> MI
     J --> O[Final one-pager]
 ```
 
@@ -49,9 +50,34 @@ flowchart TD
    arXiv IDs and titles for the selected clusters. When requested, it downloads
    LaTeX source (falling back to PDF extraction) and summarizes the paper's
    reported main result.
-5. Julius creates the first editorial draft. For a general audience or a
-   simplification request, it delegates the exact difficult material to Michel
-   and incorporates that feedback before delivery.
+5. Julius creates a factual first editorial draft from the specialist outputs.
+   This draft deliberately contains no pedagogical explanation, intuition,
+   example, analogy, or metaphor; Julius does not generate that material.
+   Instead, it marks every topic-description and main-result location with a
+   `[[MICHEL_PEDAGOGY id="…" needed="yes|no"]]` placeholder. `yes` explicitly
+   requests a Michel explanation, while `no` marks that no explanation is
+   required for the target audience.
+6. Every representative paper includes its factual main result. Julius sends the complete draft to Michel for a target-audience readability
+   review. Michel returns exact ready-to-insert pedagogical text for every
+   `needed="yes"` placeholder, using the matching identifier, while preserving
+   paper titles, arXiv links, and technical claims. Each such explanation uses
+   Michel's upbeat, curious, intuitive, and engaging style, with a relatable
+   example or accurate metaphor whenever it improves understanding.
+   Michel calls `get_pedagogical_explanation_tool` for each required marker;
+   the tool uses a strict JSON-schema LLM response and returns the explanation
+   that Michel places verbatim in the marker's `exact_text` field. Michel's
+   complete review is also emitted as validated JSON for Julius.
+7. Julius replaces every `needed="yes"` placeholder only with Michel's supplied
+   `exact_text` verbatim, formatted immediately below the factual description or
+   main result as `***Pedagogical explanation:** <Michel text>*`. It removes
+   `needed="no"` placeholders and sends the revised
+   complete one-pager back to Michel for another readability review.
+   When invoking finalization, Julius passes Michel's entire JSON response—not
+   only its feedback or explanation list—so the assessment, rationale, and
+   pedagogical insertions remain available to the editorial step.
+   The review/revision loop continues until Michel finds it readable for the
+   target audience or three Michel reviews have been completed. Julius uses
+   that final assessment to decide whether to deliver the one-pager.
 
 ## Specialist data contract
 

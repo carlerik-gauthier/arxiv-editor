@@ -23,23 +23,28 @@ from src.specialist_agent import extract_date_range as extract_specialist_date_r
 
 EXPECTED_FORMAT_OUTPUT_RULE = """
     1. For every topic, the expected output structure **MUST BE**:
-        # <TOPIC TITLE>: 
-        <topic count> papers
-        <topic description>
-        <pedagogical explanation for topic description>
-        **Representative papers**
-        1. <paper title>, <paper arxiv_id>
-        <Representative paper main results>
-        <pedagogical explanation for reprensative main result> 
-        2. <paper title>, <paper arxiv_id>
-        <Representative paper main results>
-        <pedagogical explanation for reprensative main result>
+        # <TOPIC TITLE>: \n
+        <topic count> papers\n
+        <topic description>\n
+        ***Pedagogical explanation:** <pedagogical explanation for topic description>*\n
+        **Representative papers**\n
+        1. <paper title>, <paper arxiv_id>\n
+        <Representative paper main results>\n
+        ***Pedagogical explanation:** <pedagogical explanation for representative main result>*\n
+        2. <paper title>, <paper arxiv_id>\n
+        <Representative paper main results>\n
+        ***Pedagogical explanation:** <pedagogical explanation for representative main result>*\n\n
     Repeat as many times as there are representative papers.
 
     2. Mandatory elements are <TOPIC TITLE>, <topic count>, <topic description>, <paper title>, <Representative paper main results> and <paper arxiv_id>.
-    3. Optional elements are
-    <pedagogical explanation for reprensative main result> and  <pedagogical explanation for topic description>. Both should be provided if MichelAgent is called.  
-    <pedagogical explanation for reprensative main result> and <pedagogical explanation for topic description> **MUST** be provided when the one-pager is for a general or non-expert audience
+    3. `<Representative paper main results>` is mandatory for every representative paper.
+    4. Optional elements are
+    <pedagogical explanation for representative main result> and  <pedagogical explanation for topic description>. Include them only when MichelAgent has
+    supplied them for the target audience.
+    <pedagogical explanation for representative main result> and <pedagogical explanation for topic description> **MUST** be provided when the one-pager
+    is for a general or non-expert audience. They DO NOT replace, but complement original description.
+    Every pedagogical explanation must appear immediately below the factual topic description or paper main result it explains. It must use exactly this Markdown wrapper:
+    `***Pedagogical explanation:** <MichelAgent text>*`. This makes the explanation italic and starts it with the bold label **Pedagogical explanation:**.
     
     **Description**
     - <TOPIC TITLE> is an informative title describing the topic
@@ -47,11 +52,61 @@ EXPECTED_FORMAT_OUTPUT_RULE = """
     - <topic description> is a short description about the topic content
     - <pedagogical explanation for topic description> provides a simplified and more intuitive description description of the topic when addressing to a general audience
     - <Representative paper main results> is a short description of the paper's main results
-    - <pedagogical explanation for reprensative main result> provides a simplified and more intuitive description of the main results when addressing to a general audience
+    - <pedagogical explanation for representative main result> provides a simplified and more intuitive description of the main results when addressing to a general audience
     - <paper title> is the paper title
     - <paper arxiv_id> is the paper ID in ArXiv. It links to the online paper.
 
     They must be returned regardless of user request
+"""
+
+FIRST_DRAFT_FORMAT_OUTPUT_RULE = """
+    A first draft contains only the factual editorial material supplied by the
+    specialized agents: topic title, topic count, topic description,
+    representative paper title and arXiv ID, and every representative paper's
+    main result. It must not contain a pedagogical explanation,
+    intuition, analogy, metaphor, or other reader-facing simplification.
+
+    MichelAgent owns all pedagogical additions. The draft must use a unique,
+    machine-readable placeholder at each possible pedagogical location:
+    ``[[MICHEL_PEDAGOGY id=\"<unique-location-id>\" needed=\"yes|no\"]]``.
+    For example, use ``topic-1-description`` for a topic description and
+    ``topic-1-paper-1-result`` for its first representative-paper result.
+    Choose ``needed=\"yes\"`` precisely when the target audience needs a
+    pedagogical explanation at that location; otherwise choose ``needed=\"no\"``.
+
+    A later revision removes every ``needed=\"no\"`` placeholder and replaces
+    every ``needed=\"yes\"`` placeholder with MichelAgent's verbatim ``exact_text`` explanation
+    for the matching ``id``. Each replacement must retain MichelAgent's upbeat,
+    intuitive, engaging communication style while respecting the requested
+    audience and tone. Julius must never supply replacement prose.
+    Julius may add only the required Markdown wrapper around MichelAgent's
+    exact text: ``***Pedagogical explanation:** <MichelAgent text>*``. This
+    wrapper is immediately below the factual description or main result the
+    placeholder follows.
+
+    The first draft must satisfy the following format. For every topic, the expected output structure **MUST BE**:
+        # <TOPIC TITLE>:\n
+        <topic count> papers\n
+        <topic description>\n
+        [[MICHEL_PEDAGOGY id="topic-1-description" needed="yes|no"]]\n
+        **Representative papers**\n
+        1. <paper title>, <paper arxiv_id>\n
+        <Representative paper main results>\n
+        [[MICHEL_PEDAGOGY id="topic-1-paper-1-result" needed="yes|no"]]\n
+        2. <paper title>, <paper arxiv_id>\n
+        <Representative paper main results>\n
+        [[MICHEL_PEDAGOGY id="topic-1-paper-2-result" needed="yes|no"]]\n\n
+    Repeat as many times as there are representative papers.
+
+    **Description**
+        - <TOPIC TITLE> is an informative title describing the topic
+        - <topic count> is the number of papers the topic covers.
+        - <topic description> is a short description about the topic content
+        - Each ``MICHEL_PEDAGOGY`` placeholder explicitly states whether a
+          pedagogical explanation is needed at its unique location. This placeholder does not replace, but complement the original description
+        - <Representative paper main results> is a short description of the paper's main results
+        - <paper title> is the paper title
+        - <paper arxiv_id> is the paper ID in ArXiv. It links to the online paper.
 """
 
 JULIUS_SYSTEM_PROMPT = (
@@ -70,12 +125,15 @@ JULIUS_SYSTEM_PROMPT = (
     "- Route mathematics requests to ChrisAgent (probability/statistics), AlainAgent (algebra), BrunoAgent "
     "(geometry), ElisaAgent (applied mathematics/cryptography), or FelixAgent (dynamical systems/symplectic geometry).\n"
     "- Route AI requests to AbdoulayeAgent (machine learning) or JeanBaptisteAgent (data science, NLP, LLMs, and agentic AI).\n"
-    "- Delegate clarity, intuition, and metaphor work to MichelAgent when the audience is general or when the user asks for simpler explanations.\n"
+    "- MichelAgent exclusively owns clarity, intuition, metaphor, and pedagogical-explanation work. Do not write or invent any of that material yourself.\n"
+    "- Every representative paper must include its factual main result. Require main results from every specialist delegation and do not omit them from the draft or final one-pager.\n"
     "- When you call ChrisAgent or AlainAgent, make the request self-contained and include the date range, topic count, "
     "  and whether main results are required.\n"
-    "- When you call MichelAgent, pass the exact concept or draft text that needs to be made clearer.\n"
-    "- When pedagogical explanation is needed, call MichelAgent for review.\n"
-    "- Your are prohibited from providing clarity, intuition, or metaphor material yourself; you must delegate it to MichelAgent.\n"
+    "- First assemble a factual, technical draft from the specialist outputs. This first draft must contain no pedagogical explanation, but must mark every topic-description and main-result location with a `MICHEL_PEDAGOGY` placeholder whose `needed` value is `yes` or `no`.\n"
+    "- Send that complete draft to MichelAgent for a target-audience readability review, including the audience and tone.\n"
+    "- For every placeholder marked `needed=\"yes\"`, MichelAgent must provide exact replacement text for its matching identifier in Michel's upbeat, intuitive, engaging style; copy his `exact_text` verbatim and do not create or edit it yourself.\n"
+    "- Incorporate only MichelAgent-provided pedagogical text immediately below the factual description or main result it explains, using exactly `***Pedagogical explanation:** <MichelAgent text>*`, then send the revised complete one-pager back to MichelAgent for another readability review.\n"
+    "- Continue this Julius–Michel review/revision loop until Michel finds the draft readable for the target audience or the three-review limit is reached. Julius uses that final Michel assessment to decide whether the one-pager is ready for delivery.\n"
     "- Coordinate parallel execution where possible, but do not claim parallelism if only one specialist is used.\n"
     "- Synthesize the delegated material into one coherent one-pager. Topic title, topic description, represensative papers are mandatory.\n"
     "- If the request is outside the supported mathematics and AI specialties, reply politely and state the supported scope.\n"
@@ -84,6 +142,85 @@ JULIUS_SYSTEM_PROMPT = (
 DEFAULT_MAX_TOPICS = 5
 DEFAULT_MODEL = "gpt-5.4-nano" # "gpt-4.1-mini"
 DEFAULT_MAX_TURNS = 20
+
+_EDITORIAL_ONE_PAGER_RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "status",
+        "title",
+        "topic_count",
+        "editorial_summary",
+        "content",
+        "one_pager_draft",
+        "requires_michel_review",
+    ],
+    "properties": {
+        "status": {"type": "string"},
+        "title": {"type": "string"},
+        "topic_count": {"type": "integer", "minimum": 0},
+        "editorial_summary": {"type": "string"},
+        "content": {"type": "string"},
+        "one_pager_draft": {"type": "string"},
+        "requires_michel_review": {"type": "boolean"},
+    },
+}
+
+_FINALIZATION_RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "status",
+        "final_decision",
+        "reason",
+        "content",
+        "title",
+        "needs_further_revision",
+        "michel_assessment",
+        "feedback_incorporated",
+        "editorial_summary",
+    ],
+    "properties": {
+        "status": {"type": "string"},
+        "final_decision": {"type": "string"},
+        "reason": {"type": "string"},
+        "content": {"type": "string"},
+        "title": {"type": "string"},
+        "needs_further_revision": {"type": "boolean"},
+        "michel_assessment": {"type": "string"},
+        "feedback_incorporated": {"type": "boolean"},
+        "editorial_summary": {"type": "string"},
+    },
+}
+
+
+async def _extract_michel_agent_tool_output(run_result: Any) -> str:
+    """Serialize Michel's validated agent output for Julius's tool call.
+
+    Args:
+        run_result: Nested MichelAgent execution result supplied by the Agents
+            SDK when Michel is invoked as a Julius tool.
+
+    Returns:
+        str: Canonical JSON object text containing Michel's structured review.
+
+    Raises:
+        RuntimeError: If Michel's nested run has no JSON-serializable final
+        output. The agent's ``output_type`` normally prevents this condition.
+    """
+    output = getattr(run_result, "final_output", None)
+    if hasattr(output, "model_dump_json"):
+        return output.model_dump_json()
+    if isinstance(output, dict):
+        return json.dumps(output, ensure_ascii=False)
+    if isinstance(output, str):
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("MichelAgent returned non-JSON text") from exc
+        if isinstance(parsed, dict):
+            return json.dumps(parsed, ensure_ascii=False)
+    raise RuntimeError("MichelAgent did not produce a structured review")
 
 
 _SUPPORTED_PR_ST_KEYWORDS = (
@@ -229,9 +366,10 @@ def build_julius_agent() -> Agent:
     michel_tool = build_michel_agent().as_tool(
         tool_name="michel_agent_tool",
         tool_description=(
-            "General-audience explainer. Use for feedback about simplifying technical mathematics, providing more intuition, "
-            "or generating metaphors when addressing to a general audience."
+            "Target-audience readability reviewer and sole pedagogical explainer. Review a complete Julius draft, identify "
+            "readability gaps, and supply exact explanations, intuition, or metaphors only when needed. Returns a validated JSON review."
         ),
+        custom_output_extractor=_extract_michel_agent_tool_output,
         max_turns=6,
     )
     instructions = (
@@ -240,25 +378,30 @@ def build_julius_agent() -> Agent:
         "Use `allocate_topics_tool` to decide how many topics each specialized agent should cover before delegating and the requested topic count.\n"
         "For example, if the user request mathematics, only allocate anything to agents specialized in mathematics\n"
         "Use `chris_agent_tool` to delegate probability or statistics work and collect topic titles, descriptions, "
-        "representative papers, and main results when needed.\n"
+        "representative papers, and mandatory main results.\n"
         "Use `alain_agent_tool` to delegate algebra work and collect topic titles, descriptions, "
-        "representative papers, and main results when needed.\n"
+        "representative papers, and mandatory main results.\n"
         "Use `bruno_agent_tool` for spectral or Riemannian geometry; use `elisa_agent_tool` for applied mathematics (e.g. numerical analysis)"
         "or cryptography; and use `felix_agent_tool` for dynamical systems or symplectic geometry.\n"
         "Use `abdoulaye_agent_tool` for data science or machine learning and `jean_baptiste_agent_tool` for NLP, "
         "LLMs, or agentic AI. Each specialist delegation must include the date range, topic count, audience, tone, "
-        "and whether main results are required.\n"
-        "Use `michel_agent_tool` to get feedbacks about improvement to address non-experts by vulgarizing, providing intuitions and metaphors."
-        "examples, metaphors, or simpler phrasing.\n"
-        "Use `editorial_one_pager_tool` to make the editorial work and build a first draft.\n"
-        "Use `finalize_editorial_one_pager_tool` to finalize the one pager\n"
-        "Use `revise_one_pager_tool` to decide if the one pager needs further improvement\n"
+        "and the explicit instruction that main results are required.\n"
+        "Use `editorial_one_pager_tool` only to build the factual first draft from specialist outputs. It must include a factual main result for every representative paper and must not include pedagogical explanations, but must include a `MICHEL_PEDAGOGY` placeholder with `needed=\"yes\"` or `needed=\"no\"` immediately after every topic description and representative-paper result.\n"
+        "After the first draft, always call `michel_agent_tool` with the complete draft, target audience, tone, and the instruction to assess readability.\n"
+        "MichelAgent is the only source of pedagogical explanations. He must return exact insertion text for every placeholder marked `needed=\"yes\"`.\n"
+        "Use `finalize_editorial_one_pager_tool` only to replace `needed=\"yes\"` placeholders with MichelAgent's matching `exact_text` verbatim in the exact Markdown form `***Pedagogical explanation:** <MichelAgent text>*` and remove `needed=\"no\"` placeholders; do not add new pedagogical material yourself.\n"
+        "If `finalize_editorial_one_pager_tool` returns `status=error`, stop the editorial loop and return its `user_message` to the user; do not claim that a final one-pager was produced.\n"
+        "After every call to `finalize_editorial_one_pager_tool`, call `michel_agent_tool` again to review the revised complete one-pager.\n"
+        "Repeat the Michel review and finalization loop until MichelAgent reports that the one-pager is readable for the target audience, with no more than three Michel reviews in total.\n"
+        "Use `revise_one_pager_tool` only for non-pedagogical editorial checks (format, tone, and factual completeness); it cannot replace MichelAgent's readability review.\n"
         "If the user has not specified an audience, assume LinkedIn.\n"
         "If the user has not specified a tone, assume professional.\n"
         "Always restate the execution plan briefly before the final one-pager.\n"
         "When calling `editorial_one_pager_tool`, you must provide the outputs of **all** specialized agents that have been called serialized as a JSON string, the requested topic count\n"
         "and an appealing title, the target audience and the tone to use. Remember, **all specialized agents** that got allocated topics MUST be provided!\n"
-        "When calling `finalize_editorial_one_pager_tool`, provide the first draft, MichelAgent feedback, the tone and targeted audience.\n"
+        "When calling `finalize_editorial_one_pager_tool`, provide the current draft and MichelAgent's full, unmodified JSON response—not a feedback excerpt. "
+        "It must include `satisfactory`, `readability_reason`, `feedback`, and `pedagogical_explanations` (with a matching `location` and `exact_text` "
+        "for every `needed=\"yes\"` placeholder), plus the tone and target audience.\n"
         "When calling `allocate_topics_tool`, pass the full user request so the allocation can reflect the domain mix and requested number of topics.\n"
         f"When using 'chris_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic to collect, the audience, the tone,\n"
         "and and whether main results are required.\n"
@@ -274,11 +417,9 @@ def build_julius_agent() -> Agent:
         "and and whether main results are required.\n"
         f"When using 'jean_baptiste_agent_tool' you **must** provide in the instruction the date range, the inferred categories, the number of allocated topic count, the audience, the tone,\n"
         "and and whether main results are required.\n"
-        "When delegating to MichelAgent, include the target audience and the exact topic text or result that needs simplification.\n"
-        "If you delegated to MichelAgent, you must use `finalize_editorial_one_pager_tool` to finalize the one-pager with MichelAgent's feedbacks\n"
-        "MichelAgent's feedbacks must be considered if you call `michel_agent_tool`"
-        "`michel_agent_tool` and `finalize_editorial_one_pager_tool` can be called multiple times (no more than 3 times) to refine the one-pager"
-        "When calling `revise_one_pager_tool`, provide the latest one-pager draft, the expected tone and the target audience"
+        "Every MichelAgent delegation must include the target audience, tone, complete current draft, and whether this is the initial or follow-up readability review.\n"
+        "Do not deliver the first draft. Do not treat your own judgment or `revise_one_pager_tool` as a substitute for the follow-up MichelAgent review.\n"
+        "When calling `revise_one_pager_tool`, provide the latest one-pager draft, the expected tone, and the target audience.\n"
         f"Never forget the expected format rule : {EXPECTED_FORMAT_OUTPUT_RULE}"
     )
 
@@ -703,19 +844,22 @@ def editorial_one_pager_tool(
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
-    """Synthesize specialist outputs into an audience-specific one-pager draft.
+    """Build a factual first draft from specialist outputs.
 
     Args:
         specialized_agent_inputs: JSON string or compatible handoff containing
-            specialist findings and optional explanation feedback.
+            specialist findings. MichelAgent's complete response is
+            deliberately excluded
+            from this first-draft stage.
         requested_topic_count: Maximum number of topics to include in the draft.
         title: Editorial title to use when the model does not supply one.
-        audience: Intended readership for structure and language choices.
+        audience: Intended readership recorded for the later Michel review.
         tone: Desired editorial voice for the draft.
 
     Returns:
-        Dict[str, Any]: Parsed editorial draft with default status and content
-        fields supplied when absent.
+        Dict[str, Any]: Parsed technical draft with default status and content
+        fields supplied when absent. The draft contains no pedagogical prose,
+        but labels each possible explanation with a Michel placeholder.
 
     Raises:
         RuntimeError: If no API key, a model failure, empty output, or invalid
@@ -729,11 +873,18 @@ def editorial_one_pager_tool(
 
     prompt = (
         f"You are an editorial assistant for a one-pager called {title}.\n"
-        "Select the best topics, decide whether to call 'michel_agnet' when general-audience "
-        "explanation, vulgarization, intuition, or metaphors is needed, and write a coherent first draft.\n"
-        f"Your first draft must satisfy the following format : {EXPECTED_FORMAT_OUTPUT_RULE}.\n"
+        "Select the best topics and write a coherent factual first draft from the specialist handoff.\n"
+        "Every representative paper in the draft must include its factual main result. Do not omit, substitute, or turn a main result into a pedagogical explanation.\n"
+        "This tool must not create pedagogical explanations. It must, however, identify whether each location needs one for the target audience.\n"
+        "Do not add or invent simplified wording, intuition, analogies, examples, metaphors, or other reader-facing explanations. "
+        "Those are supplied exclusively by MichelAgent after this draft is reviewed.\n"
+        "After every topic description and representative-paper main result, emit exactly one placeholder in this exact form: "
+        "[[MICHEL_PEDAGOGY id=\"<unique-location-id>\" needed=\"yes|no\"]]. "
+        "Use `needed=\"yes\"` when the target audience needs a pedagogical explanation there; otherwise use `needed=\"no\"`. "
+        "Use stable unique IDs such as `topic-1-description` and `topic-1-paper-1-result`.\n"
+        f"Your first draft must satisfy the following format: {FIRST_DRAFT_FORMAT_OUTPUT_RULE}.\n"
         "Return JSON only with keys: status, title, topic_count, "
-        "editorial_summary, content, one_pager_draft, need_michel_feedback.\n"
+        "editorial_summary, content, one_pager_draft, requires_michel_review.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
         "**NEVER change** the paper titles nor the links to ArXiv\n"
@@ -744,21 +895,17 @@ def editorial_one_pager_tool(
         f"Specialist handoff JSON:\n{json.dumps(payload, ensure_ascii=False, default=str, indent=2)}"
     )
 
-    client = OpenAI(api_key=api_key)
-    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     try:
-        response = client.responses.create(
-            model=model,
-            input=prompt,
-            temperature=0.2,
+        content = _request_strict_json_response(
+            client=OpenAI(api_key=api_key),
+            model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
+            prompt=prompt,
+            schema_name="editorial_one_pager",
+            schema=_EDITORIAL_ONE_PAGER_RESPONSE_SCHEMA,
         )
     except Exception as exc:
         raise RuntimeError(f"editorial_one_pager_tool failed: {exc}") from exc
 
-    content = (response.output_text or "").strip()
-    if not content:
-        raise RuntimeError("editorial_one_pager_tool returned an empty response")
-    
     result = _parse_json_object_response(content, "editorial_one_pager_tool")
 
     result.setdefault("status", "compiled")
@@ -767,6 +914,8 @@ def editorial_one_pager_tool(
     result.setdefault("omitted_topics", [])
     result.setdefault("editorial_summary", {})
     result.setdefault("content", "")
+    result.setdefault("one_pager_draft", result["content"])
+    result.setdefault("requires_michel_review", True)
     result.setdefault("topic_count", len(result.get("selected_topics") or []))
     return result
 
@@ -804,72 +953,353 @@ def _normalize_editorial_handoff(specialized_agent_input: Any) -> Dict[str, Any]
 @function_tool(name_override="finalize_editorial_one_pager_tool")
 def finalize_editorial_one_pager_tool(
     one_pager: str,
-    michel_agent_feedback: str,
+    michel_agent_response: str,
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
-    """Finalize a draft after incorporating MichelAgent's feedback.
+    """Revise a draft using pedagogical material supplied by MichelAgent.
 
     Args:
-        one_pager: Latest editorial draft to revise or approve.
-        michel_agent_feedback: Simplification and accessibility feedback.
+        one_pager: Latest editorial draft to revise.
+        michel_agent_response: Complete, unmodified JSON response returned by
+            MichelAgent, including its assessment, readability rationale,
+            feedback, and location-keyed pedagogical explanations.
         audience: Intended readers for the finalized version.
         tone: Desired editorial voice for the finalized version.
 
     Returns:
-        Dict[str, Any]: Finalization decision, rationale, content, and metadata.
+        Dict[str, Any]: Revision result, incorporated-feedback metadata,
+        content, and delivery recommendation. If finalization cannot obtain a
+        valid structured response, returns an ``error`` payload with a
+        user-facing retry message and the unchanged draft.
 
     Raises:
-        RuntimeError: If no API key, a model failure, empty output, or invalid
-        JSON prevents finalization.
+        RuntimeError: If the input draft is empty, no API key is configured,
+        Michel's complete response is incomplete, or placeholders remain
+        unresolved.
     """
     prompt = (
-        "You are finalizing an editorial one-pager.\n"
-        "Review the one pager draft and take into account MichelAgent feedbacks, especially when the target audience is made of non-experts (e.g. a general audience)\n"
+        "You are revising an editorial one-pager after a MichelAgent review.\n"
+        "Incorporate MichelAgent's feedback faithfully. MichelAgent is the sole source of pedagogical explanations, "
+        "intuition, examples, analogies, and metaphors.\n"
+        "Do not create any new pedagogical material beyond the exact text or recommendations supplied by MichelAgent.\n"
+        "The draft contains placeholders in the exact form `[[MICHEL_PEDAGOGY id=\"<location>\" needed=\"yes|no\"]]`. "
+        "For each `needed=\"yes\"` placeholder, replace the full placeholder with MichelAgent's non-empty `exact_text` "
+        "whose `location` exactly matches its `id`, wrapped exactly as `***Pedagogical explanation:** <MichelAgent text>*`. "
+        "Copy `exact_text` verbatim between the label and the closing italic marker: do not paraphrase, shorten, expand, "
+        "translate, or otherwise edit MichelAgent's text.\n"
+        "This wrapper must appear immediately below the factual description or paper main result preceding its placeholder. "
+        "Remove each `needed=\"no\"` placeholder without adding text. "
+        "Do not retain any MICHEL_PEDAGOGY placeholder in the revised content.\n"
+        "Keep every factual representative-paper main result in the final one-pager; a pedagogical explanation complements it and never replaces it.\n"
+        "Preserve technical content unless MichelAgent explicitly requests a reader-facing change.\n"
         f"Remember you addressing to a {audience} audience and your tone must be {tone}.\n"
-        "Return JSON only with keys: status, final_decision, reason, content, title"
-        "needs_further_revision, michel_assessment, editorial_summary.\n"
-        "Use status=ready_to_deliver and final_decision=deliver only if the draft content complexity suits to the "
-        "target audience and MichelAgent feedback has been integrated.\n"
+        "Return JSON only with keys: status, final_decision, reason, content, title, "
+        "needs_further_revision, michel_assessment, feedback_incorporated, editorial_summary.\n"
+        "Set needs_further_revision=true and final_decision=review_with_michel: the revised draft must be reviewed "
+        "again by MichelAgent before Julius can deliver it.\n"
         f"Remember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
-        "**NEVER change** the paper titles nor the links to ArXiv\n"
+        "**NEVER change** the paper titles nor the links to ArXiv.\n"
+        "**NEVER remove or add** topics from the draft. You can only rephrase the topic description or main result description.\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
         f"Latest Draft:\n{one_pager}\n"
-        f"MichelAgent feedback:\n{michel_agent_feedback}"
+        f"Complete MichelAgent response JSON:\n{michel_agent_response}"
     )
+
+    if len(one_pager.strip()) == 0:
+        raise RuntimeError("The one_pager input cannot be empty")
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for finalize_editorial_one_pager_tool")
 
-    client = OpenAI(api_key=api_key)
-    model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
+    _validate_michel_response_for_placeholders(one_pager, michel_agent_response)
+
     try:
-        response = client.responses.create(
-            model=model,
-            input=prompt,
-            temperature=0.2,
+        content = _request_strict_json_response(
+            client=OpenAI(api_key=api_key),
+            model=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
+            prompt=prompt,
+            schema_name="editorial_one_pager_finalization",
+            schema=_FINALIZATION_RESPONSE_SCHEMA,
         )
     except Exception as exc:
-        raise RuntimeError(f"finalize_editorial_one_pager_tool failed: {exc}") from exc
+        return _finalization_error(one_pager, audience, tone, exc)
 
-    content = (response.output_text or "").strip()
-    if not content:
-        raise RuntimeError("finalize_editorial_one_pager_tool returned an empty response")
+    try:
+        payload = _parse_json_object_response(content, "finalize_editorial_one_pager_tool")
+    except RuntimeError as exc:
+        return _finalization_error(one_pager, audience, tone, exc)
 
-    payload = _parse_json_object_response(content, "finalize_editorial_one_pager_tool")
-
-    payload.setdefault("status", "needs_editorial_revision")
-    payload.setdefault("final_decision", "revise")
-    payload.setdefault("needs_further_revision", payload.get("status") != "ready_to_deliver")
+    payload.setdefault("status", "needs_michel_review")
+    payload.setdefault("final_decision", "review_with_michel")
+    payload["needs_further_revision"] = True
     payload.setdefault("title", "ArXiv Research Brief")
     payload.setdefault("audience", audience)
     payload.setdefault("tone", tone)
     payload.setdefault("michel_assessment", {})
+    payload.setdefault("feedback_incorporated", True)
     payload.setdefault("editorial_summary", {})
-    payload.setdefault("content", one_pager)
+    payload["content"] = _apply_michel_pedagogical_explanations(
+        one_pager,
+        michel_agent_response,
+    )
+    unresolved_placeholders = _find_michel_placeholders(str(payload["content"]))
+    if unresolved_placeholders:
+        raise RuntimeError(
+            "finalize_editorial_one_pager_tool left unresolved Michel placeholders: "
+            f"{', '.join(unresolved_placeholders)}"
+        )
+    _validate_pedagogical_explanation_format(
+        one_pager,
+        michel_agent_response,
+        str(payload["content"]),
+    )
     return payload
+
+
+def _finalization_error(
+    one_pager: str,
+    audience: str,
+    tone: str,
+    error: Exception,
+) -> Dict[str, Any]:
+    """Create a user-facing failure payload when finalization cannot complete.
+
+    Args:
+        one_pager: Unchanged latest draft that could not be finalized.
+        audience: Intended readers for the draft.
+        tone: Requested editorial voice for the draft.
+        error: Underlying finalization or response-validation failure.
+
+    Returns:
+        Dict[str, Any]: A structured error payload containing the unchanged
+        draft and a clear message Julius must return to the user.
+    """
+    return {
+        "status": "error",
+        "error_code": "invalid_finalization_response",
+        "final_decision": "retry_required",
+        "reason": str(error),
+        "user_message": (
+            "I could not finalize the one-pager because the editorial service "
+            "returned an invalid structured response. Your latest draft has "
+            "not been changed; please retry the finalization step."
+        ),
+        "content": one_pager,
+        "title": "ArXiv Research Brief",
+        "needs_further_revision": False,
+        "audience": audience,
+        "tone": tone,
+        "michel_assessment": {},
+        "feedback_incorporated": False,
+        "editorial_summary": {},
+    }
+
+
+def _find_michel_placeholders(one_pager: str) -> List[str]:
+    """Return unresolved Michel pedagogy placeholder identifiers in a draft.
+
+    Args:
+        one_pager: Draft or revised one-pager content to inspect.
+
+    Returns:
+        List[str]: Placeholder identifiers still present in document order.
+        An empty list means every Michel placeholder was removed or replaced.
+    """
+    pattern = r'\[\[MICHEL_PEDAGOGY\s+id="([^"]+)"\s+needed="(?:yes|no)"\]\]'
+    return re.findall(pattern, one_pager)
+
+
+def _apply_michel_pedagogical_explanations(
+    one_pager: str,
+    michel_agent_response: str,
+) -> str:
+    """Replace Michel placeholders using their exact location-keyed text.
+
+    Args:
+        one_pager: Draft containing ``MICHEL_PEDAGOGY`` placeholders directly
+            below the factual descriptions or main results they complement.
+        michel_agent_response: Complete MichelAgent JSON response containing
+            location-keyed ``exact_text`` values and its review assessment.
+
+    Returns:
+        str: The original draft with every ``needed=\"yes\"`` placeholder
+        replaced by ``***Pedagogical explanation:** <exact_text>*`` and every
+        ``needed=\"no\"`` placeholder removed. ``exact_text`` is copied
+        verbatim, without editorial rewriting.
+
+    Raises:
+        RuntimeError: If a required placeholder lacks matching non-empty Michel
+        text. This should be prevented by the preceding validation step.
+    """
+    feedback = _parse_complete_michel_response(michel_agent_response)
+    explanations = feedback.get("pedagogical_explanations") or []
+    text_by_location = {
+        str(item.get("location") or "").strip(): str(item.get("exact_text") or "")
+        for item in explanations
+        if isinstance(item, dict) and str(item.get("exact_text") or "").strip()
+    }
+
+    pattern = re.compile(
+        r'\[\[MICHEL_PEDAGOGY\s+id="([^"]+)"\s+needed="(yes|no)"\]\]'
+    )
+
+    def replace_placeholder(match: re.Match[str]) -> str:
+        """Return the exact Michel insertion or remove an unneeded marker."""
+        location, needed = match.groups()
+        if needed == "no":
+            return ""
+        exact_text = text_by_location.get(location)
+        if exact_text is None:
+            raise RuntimeError(
+                "MichelAgent's complete response is missing exact pedagogical text for: "
+                f"{location}"
+            )
+        return f"***Pedagogical explanation:** {exact_text}*"
+
+    return pattern.sub(replace_placeholder, one_pager)
+
+
+def _validate_michel_response_for_placeholders(
+    one_pager: str,
+    michel_agent_response: str,
+) -> None:
+    """Ensure the complete Michel response covers required placeholders.
+
+    Args:
+        one_pager: Current draft containing zero or more Michel placeholders.
+        michel_agent_response: Complete MichelAgent JSON response containing
+            its assessment, feedback, and a ``pedagogical_explanations`` list
+            with ``location`` and ``exact_text`` fields.
+
+    Returns:
+        None: The function returns normally when all required placeholders
+        have matching non-empty Michel explanations.
+
+    Raises:
+        RuntimeError: If required placeholders are present but the complete
+        response is not a JSON object or omits matching explanation text.
+    """
+    feedback = _parse_complete_michel_response(michel_agent_response)
+    required_locations = re.findall(
+        r'\[\[MICHEL_PEDAGOGY\s+id="([^"]+)"\s+needed="yes"\]\]',
+        one_pager,
+    )
+    if not required_locations:
+        return
+
+    explanations = feedback.get("pedagogical_explanations")
+    if not isinstance(explanations, list):
+        raise RuntimeError(
+            "MichelAgent's complete response must contain pedagogical_explanations for "
+            "every required placeholder"
+        )
+
+    supplied_locations = {
+        str(item.get("location") or "").strip()
+        for item in explanations
+        if isinstance(item, dict) and str(item.get("exact_text") or "").strip()
+    }
+    missing_locations = sorted(set(required_locations) - supplied_locations)
+    if missing_locations:
+        raise RuntimeError(
+            "MichelAgent's complete response is missing exact pedagogical text for: "
+            f"{', '.join(missing_locations)}"
+        )
+
+
+def _validate_pedagogical_explanation_format(
+    original_draft: str,
+    michel_agent_response: str,
+    finalized_one_pager: str,
+) -> None:
+    """Ensure Michel explanations use the required labeled italic markup.
+
+    Args:
+        original_draft: Draft containing Michel placeholders before revision.
+        michel_agent_response: Complete MichelAgent JSON response with
+            location-keyed exact text and its readability assessment.
+        finalized_one_pager: Revised content produced by finalization.
+
+    Returns:
+        None: The function returns normally when every required explanation is
+        immediately represented by the mandated Markdown wrapper containing
+        MichelAgent's verbatim ``exact_text``.
+
+    Raises:
+        RuntimeError: If a required Michel explanation is missing the exact
+        ``***Pedagogical explanation:** <exact_text>*`` wrapper.
+    """
+    required_locations = re.findall(
+        r'\[\[MICHEL_PEDAGOGY\s+id="([^"]+)"\s+needed="yes"\]\]',
+        original_draft,
+    )
+    if not required_locations:
+        return
+
+    feedback = _parse_complete_michel_response(michel_agent_response)
+    explanations = feedback.get("pedagogical_explanations") or []
+    text_by_location = {
+        str(item.get("location") or "").strip(): str(item.get("exact_text") or "")
+        for item in explanations
+        if isinstance(item, dict)
+    }
+    invalid_locations = [
+        location
+        for location in required_locations
+        if f"***Pedagogical explanation:** {text_by_location.get(location, '')}*" not in finalized_one_pager
+    ]
+    if invalid_locations:
+        raise RuntimeError(
+            "finalize_editorial_one_pager_tool did not format Michel explanations "
+            f"as labeled italic text for: {', '.join(invalid_locations)}"
+        )
+
+
+def _parse_complete_michel_response(michel_agent_response: str) -> Dict[str, Any]:
+    """Parse and validate the full structured response returned by Michel.
+
+    Args:
+        michel_agent_response: Entire JSON response from MichelAgent. It must
+            not be reduced to only its feedback or explanation list.
+
+    Returns:
+        Dict[str, Any]: Parsed complete response with the required review,
+        rationale, feedback, and pedagogical-explanation fields.
+
+    Raises:
+        RuntimeError: If the value is not valid JSON or does not include the
+        complete Michel response contract required by finalization.
+    """
+    response = _parse_json_object_response(
+        michel_agent_response,
+        "MichelAgent response",
+    )
+    required_fields = (
+        "satisfactory",
+        "readability_reason",
+        "feedback",
+        "pedagogical_explanations",
+    )
+    missing_fields = [field for field in required_fields if field not in response]
+    if missing_fields:
+        raise RuntimeError(
+            "finalize_editorial_one_pager_tool requires MichelAgent's full "
+            "response; missing fields: "
+            f"{', '.join(missing_fields)}"
+        )
+    if not isinstance(response["satisfactory"], bool):
+        raise RuntimeError("MichelAgent's complete response field satisfactory must be a boolean")
+    if not isinstance(response["feedback"], str):
+        raise RuntimeError("MichelAgent's complete response field feedback must be a string")
+    if not isinstance(response["pedagogical_explanations"], list):
+        raise RuntimeError(
+            "MichelAgent's complete response field pedagogical_explanations "
+            "must be a list"
+        )
+    return response
 
 @function_tool(name_override="revise_one_pager_tool")
 def revise_one_pager_tool(
@@ -877,7 +1307,7 @@ def revise_one_pager_tool(
     audience: str = "LinkedIn",
     tone: str = "professional",
 ) -> Dict[str, Any]:
-    """Assess whether a one-pager fits its intended audience and tone.
+    """Assess non-pedagogical editorial fit for a one-pager.
 
     Args:
         one_pager: Draft to evaluate for editorial fit.
@@ -885,8 +1315,9 @@ def revise_one_pager_tool(
         tone: Requested editorial voice used to judge appropriateness.
 
     Returns:
-        Dict[str, Any]: Assessment status, issue type, need_michel_feedback, and the
-        reviewed draft metadata.
+        Dict[str, Any]: Assessment status, issue type, Michel-review flag, and
+        reviewed draft metadata. Readability findings always require a separate
+        MichelAgent review.
 
     Raises:
         RuntimeError: If no API key, a model failure, empty output, or invalid
@@ -894,15 +1325,16 @@ def revise_one_pager_tool(
     """
     prompt = (
         "You are reviewing a one-pager draft.\n"
-        "Judge whether it matches the requested tone and audience.\n"
-        "If it does not, decide whether the main issue is simplification, clarity, metaphor, or intuition.\n"
+        "Judge its factual completeness, structure, and requested tone.\n"
+        "Do not write, suggest, or assess pedagogical explanations, intuition, metaphors, examples, or simplification: "
+        "MichelAgent owns that work.\n"
+        "If the draft may be hard for its target audience to read, set need_michel_feedback=true and defer the "
+        "readability diagnosis to MichelAgent.\n"
         "Return JSON only with keys: status, appropriate, reason, issue_type, need_michel_feedback.\n"
         "Use issue_type=none when the draft is appropriate.\n"
-        "Use issue_type=clarity when the draft is too vague or hard to follow.\n"
-        "Use issue_type=metaphor when the draft needs a metaphor to make the idea accessible.\n"
-        "Use issue_type=intuition when the draft needs more intuitive explanation.\n"
-        "Use issue_type=simplification when the draft needs simplifications.\n"
-        "If issue_type is not none, set need_michel_feedback to True"
+        "Use issue_type=format, tone, or factual_completeness for an editorial issue.\n"
+        "Use issue_type=requires_michel_review for a possible readability issue, without proposing a remedy.\n"
+        "If issue_type is not none, set need_michel_feedback to True.\n"
         f"Remember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
@@ -1004,6 +1436,48 @@ def _parse_json_object_response(content: str, tool_name: str) -> Dict[str, Any]:
             return parsed
 
     raise RuntimeError(f"{tool_name} did not return valid JSON")
+
+
+def _request_strict_json_response(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    schema_name: str,
+    schema: Dict[str, Any],
+) -> str:
+    """Request model output constrained by a strict JSON Schema.
+
+    Args:
+        client: Initialized OpenAI client used for the Responses API call.
+        model: Model identifier that supports structured outputs.
+        prompt: Editorial instruction and source content for the model.
+        schema_name: Stable name reported to the structured-output API.
+        schema: JSON Schema that the response must satisfy.
+
+    Returns:
+        str: Non-empty model output guaranteed by the API to satisfy ``schema``.
+
+    Raises:
+        RuntimeError: If the model returns no text. API failures are propagated
+        to the calling editorial tool for contextual handling.
+    """
+    response = client.responses.create(
+        model=model,
+        input=prompt,
+        temperature=0.2,
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": schema_name,
+                "strict": True,
+                "schema": schema,
+            }
+        },
+    )
+    content = (response.output_text or "").strip()
+    if not content:
+        raise RuntimeError(f"{schema_name} returned an empty structured response")
+    return content
 
 
 def _extract_first_json_object(content: str) -> Optional[str]:

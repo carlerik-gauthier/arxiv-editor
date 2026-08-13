@@ -15,9 +15,11 @@ representative papers and their reported main results.
 </p>
 
 JuliusAgent is the editor and coordinator. It delegates retrieval and topic
-analysis to domain specialists, asks MichelAgent to improve accessibility when
-needed, and then assembles a professional brief for the requested audience and
-tone. The workflow uses the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
+analysis to domain specialists, creates a factual first draft, and asks
+MichelAgent to review readability and supply any pedagogical explanations.
+The factual draft marks required explanations with Michel-owned placeholders;
+Julius replaces each required placeholder only with Michel's feedback and sends
+the revised one-pager back to Michel for review before delivery. The workflow uses the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
 for agents, tools, delegation, runners, and tracing.
 
 ## Experimentation outcome
