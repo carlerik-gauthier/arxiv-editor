@@ -880,7 +880,7 @@ def editorial_one_pager_tool(
         "Those are supplied exclusively by MichelAgent after this draft is reviewed.\n"
         "After every topic description and representative-paper main result, emit exactly one placeholder in this exact form: "
         "[[MICHEL_PEDAGOGY id=\"<unique-location-id>\" needed=\"yes|no\"]]. "
-        "Use `needed=\"yes\"` when the target audience needs a pedagogical explanation there; otherwise use `needed=\"no\"`. "
+        f"Use `needed=\"yes\"` when the target audience, which is {audience} needs a pedagogical explanation there; otherwise use `needed=\"no\"`. "
         "Use stable unique IDs such as `topic-1-description` and `topic-1-paper-1-result`.\n"
         f"Your first draft must satisfy the following format: {FIRST_DRAFT_FORMAT_OUTPUT_RULE}.\n"
         "Return JSON only with keys: status, title, topic_count, "
