@@ -216,8 +216,9 @@ def build_michel_agent() -> Agent:
             "Use `metaphor_tool` when a metaphor can improve understanding.\n"
             "Use `assess_non_expert_satisfaction_tool` to judge whether the explanation is satisfactory for non-experts.\n"
             "If the assessment is negative, explain why, identify what is missing, then revise using the other tools.\n"
-            "When relevant, combine the tools in sequence until the explanation is satisfactory for non-experts."
-            "Return a valid JSON with keys input_message and feedback"
+            "When relevant, combine the tools in sequence until the explanation is satisfactory for non-experts. \n"
+            "Return a valid JSON with keys input_message and feedback.\n"
+            "input_message contains the input message you got, and feedback contains your improvement suggestion"
         ),
         tools=[
             make_clearer_tool,

@@ -729,11 +729,11 @@ def editorial_one_pager_tool(
 
     prompt = (
         f"You are an editorial assistant for a one-pager called {title}.\n"
-        "Use the specialist handoff to select the best topics, decide whether general-audience "
-        "explanation, vulgarization, intuition, or metaphors are needed, and write a coherent first draft.\n"
+        "Select the best topics, decide whether to call 'michel_agnet' when general-audience "
+        "explanation, vulgarization, intuition, or metaphors is needed, and write a coherent first draft.\n"
         f"Your first draft must satisfy the following format : {EXPECTED_FORMAT_OUTPUT_RULE}.\n"
         "Return JSON only with keys: status, title, topic_count, "
-        "editorial_summary, content, one_pager_draft.\n"
+        "editorial_summary, content, one_pager_draft, need_michel_feedback.\n"
         "Do not invent unsupported facts.\n"
         "Use concise editorial prose.\n"
         "**NEVER change** the paper titles nor the links to ArXiv\n"
@@ -885,7 +885,7 @@ def revise_one_pager_tool(
         tone: Requested editorial voice used to judge appropriateness.
 
     Returns:
-        Dict[str, Any]: Assessment status, issue type, recommendation, and the
+        Dict[str, Any]: Assessment status, issue type, need_michel_feedback, and the
         reviewed draft metadata.
 
     Raises:
@@ -896,12 +896,13 @@ def revise_one_pager_tool(
         "You are reviewing a one-pager draft.\n"
         "Judge whether it matches the requested tone and audience.\n"
         "If it does not, decide whether the main issue is simplification, clarity, metaphor, or intuition.\n"
-        "Return JSON only with keys: status, appropriate, reason, issue_type, recommendation.\n"
+        "Return JSON only with keys: status, appropriate, reason, issue_type, need_michel_feedback.\n"
         "Use issue_type=none when the draft is appropriate.\n"
         "Use issue_type=clarity when the draft is too vague or hard to follow.\n"
         "Use issue_type=metaphor when the draft needs a metaphor to make the idea accessible.\n"
         "Use issue_type=intuition when the draft needs more intuitive explanation.\n"
         "Use issue_type=simplification when the draft needs simplifications.\n"
+        "If issue_type is not none, set need_michel_feedback to True"
         f"Remember the one_pager **MUST** satisfy {EXPECTED_FORMAT_OUTPUT_RULE}\n"
         f"Target audience: {audience}\n"
         f"Tone: {tone}\n"
