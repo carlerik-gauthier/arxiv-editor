@@ -24,19 +24,16 @@ from src.specialist_agent import extract_date_range as extract_specialist_date_r
 EXPECTED_FORMAT_OUTPUT_RULE = """
     1. For every topic, the expected output structure **MUST BE**:
         # <TOPIC TITLE>: \n
-        <topic count> papers\n
+        <nb_papers> papers\n
         <topic description>\n
         ***Pedagogical explanation:** <pedagogical explanation for topic description>*\n
         **Representative papers**\n
-        1. <paper title>, <paper arxiv_id>\n
+        <paper title>, <paper arxiv_id>\n
         <Representative paper main results>\n
         ***Pedagogical explanation:** <pedagogical explanation for representative main result>*\n
-        2. <paper title>, <paper arxiv_id>\n
-        <Representative paper main results>\n
-        ***Pedagogical explanation:** <pedagogical explanation for representative main result>*\n\n
     Repeat as many times as there are representative papers.
 
-    2. Mandatory elements are <TOPIC TITLE>, <topic count>, <topic description>, <paper title>, <Representative paper main results> and <paper arxiv_id>.
+    2. Mandatory elements are <TOPIC TITLE>, <nb_papers>, <topic description>, <paper title>, <Representative paper main results> and <paper arxiv_id>.
     3. `<Representative paper main results>` is mandatory for every representative paper.
     4. Optional elements are
     <pedagogical explanation for representative main result> and  <pedagogical explanation for topic description>. Include them only when Julius judges
@@ -45,10 +42,10 @@ EXPECTED_FORMAT_OUTPUT_RULE = """
     is for a general or non-expert audience. They DO NOT replace, but complement original description.
     Every pedagogical explanation must appear immediately below the factual topic description or paper main result it explains. It must use exactly this Markdown wrapper:
     `***Pedagogical explanation:** <editorial explanation>*`. This makes the explanation italic and starts it with the bold label **Pedagogical explanation:**.
-    
+
     **Description**
     - <TOPIC TITLE> is an informative title describing the topic
-    - <topic count> is the number of papers the topic covers.
+    - <nb_papers> is the number of papers the topic covers.
     - <topic description> is a short description about the topic content
     - <pedagogical explanation for topic description> provides a simplified and more intuitive description description of the topic when addressing to a general audience
     - <Representative paper main results> is a short description of the paper's main results
@@ -61,7 +58,7 @@ EXPECTED_FORMAT_OUTPUT_RULE = """
 
 FIRST_DRAFT_FORMAT_OUTPUT_RULE = """
     A first draft contains only the factual editorial material supplied by the
-    specialized agents: topic title, topic count, topic description,
+    specialized agents: topic title, nb_papers, topic description,
     representative paper title and arXiv ID, and every representative paper's
     main result. It must not contain a pedagogical explanation,
     intuition, analogy, metaphor, or other reader-facing simplification.
@@ -84,7 +81,7 @@ FIRST_DRAFT_FORMAT_OUTPUT_RULE = """
 
     The first draft must satisfy the following format. For every topic, the expected output structure **MUST BE**:
         # <TOPIC TITLE>:\n
-        <topic count> papers\n
+        <nb_papers> papers\n
         <topic description>\n
         [[MICHEL_PEDAGOGY id="topic-1-description" needed="yes|no"]]\n
         **Representative papers**\n
@@ -98,13 +95,17 @@ FIRST_DRAFT_FORMAT_OUTPUT_RULE = """
 
     **Description**
         - <TOPIC TITLE> is an informative title describing the topic
-        - <topic count> is the number of papers the topic covers.
+        - <nb_papers> is the number of papers the topic covers.
         - <topic description> is a short description about the topic content
         - Each ``MICHEL_PEDAGOGY`` placeholder explicitly states whether a
           pedagogical explanation is needed at its unique location. This placeholder does not replace, but complement the original description
         - <Representative paper main results> is a short description of the paper's main results
         - <paper title> is the paper title
         - <paper arxiv_id> is the paper ID in ArXiv. It links to the online paper.
+
+    Mandatory elements are <TOPIC TITLE>, <nb_papers>, <topic description>, <paper title>, <Representative paper main results> and <paper arxiv_id>.
+
+    `<Representative paper main results>` is mandatory for every representative paper.
 """
 
 JULIUS_SYSTEM_PROMPT = (
@@ -153,7 +154,7 @@ _EDITORIAL_ONE_PAGER_RESPONSE_SCHEMA: Dict[str, Any] = {
     "required": [
         "status",
         "title",
-        "topic_count",
+        "nb_papers",
         "editorial_summary",
         "content",
         "one_pager_draft",
@@ -162,7 +163,7 @@ _EDITORIAL_ONE_PAGER_RESPONSE_SCHEMA: Dict[str, Any] = {
     "properties": {
         "status": {"type": "string"},
         "title": {"type": "string"},
-        "topic_count": {"type": "integer", "minimum": 0},
+        "nb_papers": {"type": "integer", "minimum": 0},
         "editorial_summary": {"type": "string"},
         "content": {"type": "string"},
         "one_pager_draft": {"type": "string"},

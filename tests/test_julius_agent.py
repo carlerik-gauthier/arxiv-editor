@@ -197,6 +197,8 @@ def test_julius_prompt_requires_main_results_and_allows_editorial_explanations()
     assert "Julius decides whether to apply, rephrase, or reject each suggestion" in instructions
 
 
+
+
 def test_strict_json_request_uses_a_json_schema_response_format():
     """Verify editorial tools enforce JSON at the Responses API boundary.
 

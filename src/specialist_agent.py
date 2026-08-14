@@ -31,7 +31,7 @@ ISO_DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 TOPIC_SCHEMA = """{
   'topic_title': <title>,
   'topic_description': <description>,
-  'topic_count': <paper count>,
+  'nb_papers': <paper count>,
   'representative_papers': [
     {'paper_title': <title>, 'paper_arxiv_id': <arxiv id>, 'main_result': <result>}
   ]
