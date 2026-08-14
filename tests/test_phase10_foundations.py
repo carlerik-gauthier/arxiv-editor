@@ -202,6 +202,16 @@ def test_allocation_cap_enforces_the_requested_topic_budget():
     ]
 
 
+def test_allocation_safety_margin_preserves_the_final_topic_target():
+    """Verify delegation retains one backup topic for a partial specialist result."""
+    allocations = [{"agent_name": "ChrisAgent", "topic_count": 2}]
+
+    buffered = julius_agent._add_allocation_safety_margin(allocations, 2)
+
+    assert buffered == [{"agent_name": "ChrisAgent", "topic_count": 3}]
+    assert sum(item["topic_count"] for item in buffered) == 3
+
+
 def test_conversation_context_labels_the_new_user_message():
     """Verify current user input is labeled apart from prior conversation.
 
